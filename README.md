@@ -1,6 +1,6 @@
 # Anaglyph Stereoscope
 
-A modular Windows 11 Python application for aligning two AmScope MD500L cameras into a live 3D anaglyph (Cyan/Magenta) video stream.
+A modular Windows 11 Python application for aligning two AmScope MD500L cameras into a live 3D anaglyph (Cyan/Magenta) video stream. Optionally supports an AmScope MU503 (top-down USB3.0 camera) as a third view.
 
 ## Project Structure
 
@@ -39,9 +39,9 @@ python camera_manager.py
 ```
 
 This will:
-1. Discover cameras via VID/PID (using `cv2-enumerate-cameras`)
-2. Assign Left and Right based on persisted config (or first/second found)
-3. Open both captures and read a test frame
+1. Discover cameras via VID/PID (using `cv2-enumerate-cameras`), including DSHOW for the MU503
+2. Assign Left and Right (MD500L stereo pair) and optional Top (MU503 top-down) based on persisted config
+3. Open all captures and read a test frame
 4. Save the mapping to `camera_config.json` for consistent assignment on restart
 
 ## Next Steps

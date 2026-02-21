@@ -1,0 +1,105 @@
+================================================================================
+  Anaglyph Stereoscope - How to Use
+================================================================================
+
+This application aligns two AmScope MD500L stereo cameras (and an optional
+AmScope MU503 top-down camera) into a live 3D red-cyan anaglyph view. Use
+red/cyan 3D glasses to see depth.
+
+--------------------------------------------------------------------------------
+1. REQUIREMENTS
+--------------------------------------------------------------------------------
+  - Windows 11 (or compatible)
+  - Python 3.9 or newer
+  - Cameras: two AmScope MD500L (left/right), optionally one AmScope MU503 (top)
+
+  Install dependencies (from the project folder):
+    pip install -r requirements.txt
+
+  Packages: opencv-python, PyQt6, numpy, cv2-enumerate-cameras
+
+--------------------------------------------------------------------------------
+2. RUNNING THE APPLICATION
+--------------------------------------------------------------------------------
+  From the project folder in a terminal:
+
+    python main.py --gui
+
+  To only check that cameras are detected (no GUI):
+
+    python main.py --verify
+
+--------------------------------------------------------------------------------
+3. WINDOW OVERVIEW
+--------------------------------------------------------------------------------
+  LEFT SIDEBAR
+  - Camera previews: Top (top-down), Left, Right (stereo pair).
+  - Focus stoplights and sharpness numbers (green = good focus).
+  - "Which cameras are in focus?" – check Left, Right, Top as you focus.
+  - "Which has the shutter open?" – choose:
+      * "Top and Right"  → top and right cameras are live (for Top↔Right alignment).
+      * "Left and Right" → left and right cameras are live (for Left↔Right alignment).
+  - Lock / Unlock – see section 5 below.
+
+  RIGHT SIDE
+  - Alignment metrics: rotation, scale, translation for Top↔Left, Top↔Right, Left↔Right.
+  - Three-way overlay: grayscale blend of all three views aligned (left as reference).
+  - Anaglyph: red-cyan stereo view (for 3D glasses), cropped to the overlap region.
+
+  MENU BAR
+  - File → End program (or Ctrl+Q) to quit.
+  - File → Save overlay as JPG... to save the three-way overlay.
+  - File → Save anaglyph as JPG... to save the red-cyan anaglyph.
+
+--------------------------------------------------------------------------------
+4. ALIGNMENT AND SHUTTER
+--------------------------------------------------------------------------------
+  Alignment is computed from the two cameras that have the shutter open.
+
+  - To see Top↔Right metrics: select "Top and Right" as shutter.
+  - To see Left↔Right metrics: select "Left and Right" as shutter.
+  - Top↔Left can be derived from the other two when needed.
+
+  If a pair shows "(use 'Top and Right' shutter)" or "(use 'Left and Right'
+  shutter)", switch the shutter to the indicated option so both feeds for
+  that pair are live. The tooltip on the Alignment Metrics box explains this.
+
+--------------------------------------------------------------------------------
+5. LOCK AND UNLOCK (CHANGING SLIDES)
+--------------------------------------------------------------------------------
+  - Lock: Freezes the current alignment transforms. Use this before changing
+    slides under the scope so that alignment does not change while you work.
+    The overlay and anaglyph continue to update from the cameras, but the
+    alignment (rotation, scale, translation) stays fixed.
+
+  - Unlock: Resumes live alignment updates. Use after you have put a new slide
+    in place and want to realign.
+
+--------------------------------------------------------------------------------
+6. SAVING STILL IMAGES
+--------------------------------------------------------------------------------
+  - File → Save overlay as JPG...  Saves the current three-way grayscale
+    overlay at full resolution (left camera size).
+  - File → Save anaglyph as JPG... Saves the current red-cyan anaglyph at
+    full resolution, cropped to the overlap region.
+
+  When alignment is locked, the saved images use the locked transforms. Choose
+  a filename and location in the save dialog; the app will add .jpg if needed.
+
+--------------------------------------------------------------------------------
+7. RED-CYAN 3D GLASSES
+--------------------------------------------------------------------------------
+  The anaglyph view is encoded for standard red-cyan glasses:
+  - Red filter (left eye) sees the left camera image.
+  - Cyan filter (right eye) sees the right camera image.
+
+  The anaglyph is cropped so that only the region where both views overlap is
+  shown, avoiding large single-color borders.
+
+--------------------------------------------------------------------------------
+8. QUITTING
+--------------------------------------------------------------------------------
+  Use File → End program, or press Ctrl+Q, or close the window. The application
+  will release the cameras and exit.
+
+================================================================================
