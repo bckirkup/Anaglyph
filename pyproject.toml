@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "anaglyph"
+version = "0.1.0"
+description = "Live 3D anaglyph compositing from dual-camera stereoscopes"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.10"
+dependencies = [
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+    "PyQt6>=6.5.0",
+]
+
+[project.optional-dependencies]
+enumerate = [
+    "cv2-enumerate-cameras>=1.3.0",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-qt>=4.2",
+    "ruff>=0.8.0",
+    "mypy>=1.13",
+    "pre-commit>=3.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+only-include = ["main.py", "camera_manager.py", "calibration.py", "gui.py"]
+
+[project.scripts]
+anaglyph = "main:main"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "TCH",  # type-checking imports
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "SIM108", # ternary operator
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["camera_manager", "calibration", "gui"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "hardware: requires physical cameras and human operator (deselect with '-m \"not hardware\"')",
+]

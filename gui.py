@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -17,15 +15,13 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 try:
-    from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal, QTimer
+    from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
     from PyQt6.QtGui import QImage, QPixmap
     from PyQt6.QtWidgets import (
         QApplication,
         QButtonGroup,
         QCheckBox,
         QFileDialog,
-        QFrame,
-        QGridLayout,
         QGroupBox,
         QHBoxLayout,
         QLabel,
@@ -38,6 +34,7 @@ try:
         QVBoxLayout,
         QWidget,
     )
+
     HAS_PYQT6 = True
 except ImportError:
     HAS_PYQT6 = False
@@ -126,7 +123,7 @@ def _apply_180_flip_to_transform(M: np.ndarray, src_w: int, src_h: int) -> np.nd
     return np.hstack([R_new, t_new])
 
 
-def compute_alignment(img1: np.ndarray, img2: np.ndarray) -> tuple[AlignmentMetrics, Optional[np.ndarray]]:
+def compute_alignment(img1: np.ndarray, img2: np.ndarray) -> tuple[AlignmentMetrics, np.ndarray | None]:
     """
     Estimate similarity transform (rotation, scale, translation) from img1 to img2.
     Returns (metrics, 2x3 matrix in original image coords) or (invalid, None).
@@ -168,8 +165,10 @@ def compute_alignment(img1: np.ndarray, img2: np.ndarray) -> tuple[AlignmentMetr
     # Scale M from resized coords to full image coords: p2_resized = M @ p1_resized, p1_resized = r1*p1_full, p2_full = p2_resized/r2 => M_full: R_full = (r1/r2)*R, t_full = t/r2
     if r1 != 1.0 or r2 != 1.0:
         scale = r1 / r2
-        M = np.array([[M[0, 0] * scale, M[0, 1] * scale, M[0, 2] / r2],
-                      [M[1, 0] * scale, M[1, 1] * scale, M[1, 2] / r2]], dtype=np.float64)
+        M = np.array(
+            [[M[0, 0] * scale, M[0, 1] * scale, M[0, 2] / r2], [M[1, 0] * scale, M[1, 1] * scale, M[1, 2] / r2]],
+            dtype=np.float64,
+        )
     out = _affine_to_metrics(M)
     return out, M
 
@@ -178,7 +177,7 @@ def build_anaglyph_overlap(
     left_bgr: np.ndarray,
     right_bgr: np.ndarray,
     M_right_to_left: np.ndarray,
-) -> tuple[Optional[np.ndarray], Optional[tuple[int, int, int, int]]]:
+) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None]:
     """
     Build red-cyan anaglyph for red/cyan glasses. Left eye sees red (left image),
     right eye sees cyan (right image). Crop to overlap so no big single-color regions.
@@ -196,9 +195,9 @@ def build_anaglyph_overlap(
     right_g = cv2.cvtColor(right_warped, cv2.COLOR_BGR2GRAY)
     # Red-cyan encoding: R = left (red filter = left eye), G = B = right (cyan = right eye)
     out = np.zeros((h_l, w_l, 3), dtype=np.uint8)
-    out[:, :, 0] = right_g   # B
-    out[:, :, 1] = right_g   # G  -> cyan = right image for right eye
-    out[:, :, 2] = left_g    # R  -> red = left image for left eye
+    out[:, :, 0] = right_g  # B
+    out[:, :, 1] = right_g  # G  -> cyan = right image for right eye
+    out[:, :, 2] = left_g  # R  -> red = left image for left eye
 
     # Crop to overlap region so there are no large areas of only red or only cyan
     right_has_content = right_g > 16
@@ -220,11 +219,11 @@ def build_anaglyph_overlap(
 
 
 def build_three_way_overlay(
-    top_bgr: Optional[np.ndarray],
-    left_bgr: Optional[np.ndarray],
-    right_bgr: Optional[np.ndarray],
-    M_right_to_left: Optional[np.ndarray],
-    M_top_to_left: Optional[np.ndarray],
+    top_bgr: np.ndarray | None,
+    left_bgr: np.ndarray | None,
+    right_bgr: np.ndarray | None,
+    M_right_to_left: np.ndarray | None,
+    M_top_to_left: np.ndarray | None,
     out_w: int = 420,
     out_h: int = 280,
 ) -> np.ndarray:
@@ -279,9 +278,9 @@ def cv2_to_qimage(frame: np.ndarray) -> QImage:
 
 
 # Sharpness thresholds for stoplight (Laplacian variance)
-SHARPNESS_RED = 100   # Below: poor focus
+SHARPNESS_RED = 100  # Below: poor focus
 SHARPNESS_YELLOW = 300  # Red–Yellow: improving; Yellow–Green: good
-SHARPNESS_GREEN = 500   # Above: excellent focus
+SHARPNESS_GREEN = 500  # Above: excellent focus
 
 
 class CaptureWorker(QThread):
@@ -291,9 +290,9 @@ class CaptureWorker(QThread):
 
     def __init__(
         self,
-        left_cap: Optional[cv2.VideoCapture],
-        right_cap: Optional[cv2.VideoCapture],
-        top_cap: Optional[cv2.VideoCapture],
+        left_cap: cv2.VideoCapture | None,
+        right_cap: cv2.VideoCapture | None,
+        top_cap: cv2.VideoCapture | None,
     ) -> None:
         super().__init__()
         self._caps = {
@@ -322,9 +321,9 @@ class CameraSetupWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._pair = None
-        self._worker: Optional[CaptureWorker] = None
+        self._worker: CaptureWorker | None = None
         self._state = SetupState()
-        self._last_frame: dict[str, Optional[np.ndarray]] = {
+        self._last_frame: dict[str, np.ndarray | None] = {
             "left": None,
             "right": None,
             "top": None,
@@ -332,9 +331,9 @@ class CameraSetupWindow(QMainWindow):
         self._init_frames_remaining = 180  # Show all feeds for ~2–3 sec on startup
         self._last_valid_align_text: dict[str, str] = {}
         self._last_valid_overall: str = "Overall: —"
-        self._stereo_M_right_to_left: Optional[np.ndarray] = None
-        self._stereo_overlap_roi: Optional[tuple[int, int, int, int]] = None
-        self._M_top_to_left: Optional[np.ndarray] = None
+        self._stereo_M_right_to_left: np.ndarray | None = None
+        self._stereo_overlap_roi: tuple[int, int, int, int] | None = None
+        self._M_top_to_left: np.ndarray | None = None
         self._transforms_locked: bool = False
         self._setup_ui()
         self._init_cameras()
@@ -399,7 +398,9 @@ class CameraSetupWindow(QMainWindow):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         align_group = QGroupBox("Alignment Metrics (rotation, scale, translation)")
-        align_group.setToolTip("Top↔Right updates when 'Top and Right' shutter is selected; Left↔Right when 'Left and Right'.")
+        align_group.setToolTip(
+            "Top↔Right updates when 'Top and Right' shutter is selected; Left↔Right when 'Left and Right'."
+        )
         align_inner = QVBoxLayout(align_group)
         self._align_labels: dict[str, QLabel] = {}
         for pair in ("Top↔Left", "Top↔Right", "Left↔Right"):
@@ -445,9 +446,7 @@ class CameraSetupWindow(QMainWindow):
         row.addWidget(lbl)
         indicator = QLabel()
         indicator.setFixedSize(24, 24)
-        indicator.setStyleSheet(
-            "background: #333; border-radius: 12px; border: 2px solid #555;"
-        )
+        indicator.setStyleSheet("background: #333; border-radius: 12px; border: 2px solid #555;")
         indicator.setObjectName(f"stoplight_{name.lower()}")
         row.addWidget(indicator)
         sharpness_lbl = QLabel("—")
@@ -514,7 +513,7 @@ class CameraSetupWindow(QMainWindow):
         layout.addLayout(btn_layout)
 
     def _init_cameras(self) -> None:
-        from camera_manager import CameraManager, StereoPair
+        from camera_manager import CameraManager
 
         mgr = CameraManager()
         self._pair = mgr.get_stereo_pair(prefer_amscope=False, include_top=True)
@@ -578,9 +577,8 @@ class CameraSetupWindow(QMainWindow):
             return
         scores = []
         last_valid = self._last_valid_align_text
-        top_right_open = self._rb_shutter_top_right.isChecked()
 
-        def set_pair(key: str, m: AlignmentMetrics, text_override: Optional[str] = None) -> None:
+        def set_pair(key: str, m: AlignmentMetrics, text_override: str | None = None) -> None:
             if not self._align_labels.get(key):
                 return
             both_live = self._both_cams_live_for_pair(key)
@@ -592,10 +590,7 @@ class CameraSetupWindow(QMainWindow):
                         scores.append(m.score)
                 return
             if m.valid:
-                t = (
-                    f"rot={m.rotation_deg:.1f}° scale={m.scale:.3f} "
-                    f"tx={m.tx:.0f} ty={m.ty:.0f}px  score={m.score:.0f}"
-                )
+                t = f"rot={m.rotation_deg:.1f}° scale={m.scale:.3f} tx={m.tx:.0f} ty={m.ty:.0f}px  score={m.score:.0f}"
                 if both_live or key == "Top↔Left":
                     self._align_labels[key].setText(t)
                     last_valid[key] = t
@@ -614,35 +609,25 @@ class CameraSetupWindow(QMainWindow):
                         self._align_labels[key].setText(last_valid.get(key, "— (insufficient features)"))
 
         try:
-            m_tr, M_tr = compute_alignment(
-                self._last_frame.get("top"), self._last_frame.get("right")
-            )
+            m_tr, M_tr = compute_alignment(self._last_frame.get("top"), self._last_frame.get("right"))
             if not m_tr.valid and M_tr is None:
-                m_rt, M_rt = compute_alignment(
-                    self._last_frame.get("right"), self._last_frame.get("top")
-                )
+                m_rt, M_rt = compute_alignment(self._last_frame.get("right"), self._last_frame.get("top"))
                 if M_rt is not None:
                     M_tr = _invert_affine(M_rt)
                     m_tr = _affine_to_metrics(M_tr)
                     m_tr.valid = True
-            m_lr, M_lr = compute_alignment(
-                self._last_frame.get("right"), self._last_frame.get("left")
-            )
+            m_lr, M_lr = compute_alignment(self._last_frame.get("right"), self._last_frame.get("left"))
             set_pair("Top↔Right", m_tr)
             set_pair("Left↔Right", m_lr)
             if m_lr.valid and M_lr is not None:
                 self._stereo_M_right_to_left = M_lr.copy()
                 left_img = self._last_frame.get("left")
                 if left_img is not None:
-                    anag, roi = build_anaglyph_overlap(
-                        left_img, self._last_frame.get("right"), M_lr
-                    )
+                    anag, roi = build_anaglyph_overlap(left_img, self._last_frame.get("right"), M_lr)
                     if roi is not None:
                         self._stereo_overlap_roi = roi
 
-            m_tl, M_tl = compute_alignment(
-                self._last_frame.get("top"), self._last_frame.get("left")
-            )
+            m_tl, M_tl = compute_alignment(self._last_frame.get("top"), self._last_frame.get("left"))
             if m_tl.valid and M_tl is not None:
                 pass  # will apply consistency fix below
             elif M_tr is not None and M_lr is not None:
@@ -749,7 +734,7 @@ class CameraSetupWindow(QMainWindow):
         except Exception:
             pass
 
-    def get_stereo_params(self) -> tuple[Optional[np.ndarray], Optional[tuple[int, int, int, int]]]:
+    def get_stereo_params(self) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None]:
         """Return (M_right_to_left, overlap_roi) for use in 3D mode."""
         return (
             getattr(self, "_stereo_M_right_to_left", None),
@@ -798,9 +783,7 @@ class CameraSetupWindow(QMainWindow):
         indicator = getattr(self, f"_stoplight_{display_id}", None)
         sharpness_lbl = getattr(self, f"_sharpness_lbl_{display_id}", None)
         if indicator:
-            indicator.setStyleSheet(
-                f"background: {color}; border-radius: 12px; border: 2px solid #333;"
-            )
+            indicator.setStyleSheet(f"background: {color}; border-radius: 12px; border: 2px solid #333;")
         if sharpness_lbl:
             sharpness_lbl.setText(f"{int(sharpness)}")
 
@@ -827,7 +810,9 @@ class CameraSetupWindow(QMainWindow):
         else:
             self._align_timer.start(500)
             self._btn_lock.setText("Lock")
-            self._btn_lock.setToolTip("Freeze alignment transforms so you can change slides without changing alignments.")
+            self._btn_lock.setToolTip(
+                "Freeze alignment transforms so you can change slides without changing alignments."
+            )
 
     def _on_end_program(self) -> None:
         """Quit the application."""
@@ -835,9 +820,7 @@ class CameraSetupWindow(QMainWindow):
 
     def _save_overlay_jpg(self) -> None:
         """Save current three-way overlay as JPG (file dialog)."""
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save overlay as JPG", "", "JPEG (*.jpg *.jpeg);;All files (*)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "Save overlay as JPG", "", "JPEG (*.jpg *.jpeg);;All files (*)")
         if not path:
             return
         if not path.lower().endswith((".jpg", ".jpeg")):
@@ -867,9 +850,7 @@ class CameraSetupWindow(QMainWindow):
 
     def _save_anaglyph_jpg(self) -> None:
         """Save current anaglyph as JPG (file dialog)."""
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save anaglyph as JPG", "", "JPEG (*.jpg *.jpeg);;All files (*)"
-        )
+        path, _ = QFileDialog.getSaveFileName(self, "Save anaglyph as JPG", "", "JPEG (*.jpg *.jpeg);;All files (*)")
         if not path:
             return
         if not path.lower().endswith((".jpg", ".jpeg")):
@@ -890,7 +871,7 @@ class CameraSetupWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Save failed", str(e))
 
-    def get_state(self) -> Optional[SetupState]:
+    def get_state(self) -> SetupState | None:
         return self._state
 
     def closeEvent(self, event) -> None:
@@ -906,7 +887,7 @@ class CameraSetupWindow(QMainWindow):
         event.accept()
 
 
-def create_main_window() -> Optional[QMainWindow]:
+def create_main_window() -> QMainWindow | None:
     """Create and return the main application window."""
     if not HAS_PYQT6:
         logger.error("PyQt6 not installed. Run: pip install PyQt6")

@@ -12,13 +12,13 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 import cv2
 
 # Optional: cv2-enumerate-cameras for VID/PID discovery (recommended on Windows)
 try:
     from cv2_enumerate_cameras import enumerate_cameras
+
     HAS_ENUMERATE_CAMERAS = True
 except ImportError:
     HAS_ENUMERATE_CAMERAS = False
@@ -39,9 +39,9 @@ class CameraInfo:
     index: int
     backend: int
     name: str
-    vid: Optional[int] = None
-    pid: Optional[int] = None
-    path: Optional[str] = None
+    vid: int | None = None
+    pid: int | None = None
+    path: str | None = None
     key: str = ""  # Unique key: vid:pid:path or index for fallback
 
     def __post_init__(self) -> None:
@@ -68,12 +68,12 @@ class CameraInfo:
 class StereoPair:
     """Left and Right camera info for the stereoscope, plus optional Top (top-down)."""
 
-    left: Optional[CameraInfo] = None
-    right: Optional[CameraInfo] = None
-    top: Optional[CameraInfo] = None  # Optional: MU503 or other top-down camera
-    left_capture: Optional[cv2.VideoCapture] = field(default=None, repr=False)
-    right_capture: Optional[cv2.VideoCapture] = field(default=None, repr=False)
-    top_capture: Optional[cv2.VideoCapture] = field(default=None, repr=False)
+    left: CameraInfo | None = None
+    right: CameraInfo | None = None
+    top: CameraInfo | None = None  # Optional: MU503 or other top-down camera
+    left_capture: cv2.VideoCapture | None = field(default=None, repr=False)
+    right_capture: cv2.VideoCapture | None = field(default=None, repr=False)
+    top_capture: cv2.VideoCapture | None = field(default=None, repr=False)
 
     def release(self) -> None:
         """Release all camera captures."""
@@ -91,7 +91,7 @@ class CameraManager:
     Persists Left/Right mapping by VID/PID/path so eyepieces don't swap on restart.
     """
 
-    def __init__(self, config_path: Optional[Path] = None) -> None:
+    def __init__(self, config_path: Path | None = None) -> None:
         self.config_path = config_path or Path(__file__).parent / CONFIG_FILENAME
         self._config: dict = {}
         self._load_config()
@@ -184,9 +184,9 @@ class CameraManager:
 
     def get_stereo_pair(
         self,
-        left_key: Optional[str] = None,
-        right_key: Optional[str] = None,
-        top_key: Optional[str] = None,
+        left_key: str | None = None,
+        right_key: str | None = None,
+        top_key: str | None = None,
         prefer_amscope: bool = True,
         include_top: bool = True,
     ) -> StereoPair:
@@ -208,9 +208,9 @@ class CameraManager:
         # Filter to AmScope if requested (MD500L, MU503 "USB3.0 Camera", MU503(USB2.0))
         if prefer_amscope:
             amscope = [
-                c for c in all_cams
-                if c.vid in AMSCOPE_VIDS
-                or (c.name and ("USB3.0" in c.name.upper() or "MU503" in c.name.upper()))
+                c
+                for c in all_cams
+                if c.vid in AMSCOPE_VIDS or (c.name and ("USB3.0" in c.name.upper() or "MU503" in c.name.upper()))
             ]
             if len(amscope) >= 2:
                 all_cams = amscope
@@ -223,10 +223,7 @@ class CameraManager:
             return StereoPair()
 
         # Identify top-down camera (MU503) vs stereo pair (MD500L)
-        top_candidates = [
-            c for c in all_cams
-            if c.is_mu503() or c.is_usb3_camera() or c.is_mu503_by_name()
-        ]
+        top_candidates = [c for c in all_cams if c.is_mu503() or c.is_usb3_camera() or c.is_mu503_by_name()]
         stereo_candidates = [c for c in all_cams if c not in top_candidates]
         if len(stereo_candidates) < 2:
             stereo_candidates = all_cams  # Fallback if no clear MU503
@@ -274,9 +271,9 @@ class CameraManager:
     def _find_by_key(
         self,
         cameras: list[CameraInfo],
-        key: Optional[str],
+        key: str | None,
         default_index: int,
-    ) -> Optional[CameraInfo]:
+    ) -> CameraInfo | None:
         """Find camera by persisted key, or use default index."""
         if key:
             for c in cameras:
@@ -289,9 +286,9 @@ class CameraManager:
     def open_captures(
         self,
         pair: StereoPair,
-        width: Optional[int] = None,
-        height: Optional[int] = None,
-        fps: Optional[float] = None,
+        width: int | None = None,
+        height: int | None = None,
+        fps: float | None = None,
     ) -> bool:
         """
         Open VideoCapture for left, right, and optional top cameras. Call release() when done.
@@ -310,7 +307,7 @@ class CameraManager:
         if not pair.left or not pair.right:
             return False
 
-        def open_one(info: CameraInfo, retries: int = 2) -> Optional[cv2.VideoCapture]:
+        def open_one(info: CameraInfo, retries: int = 2) -> cv2.VideoCapture | None:
             for attempt in range(retries):
                 cap = cv2.VideoCapture(info.index, info.backend)
                 if cap.isOpened():

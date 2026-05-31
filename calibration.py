@@ -8,10 +8,12 @@ Black-and-white target detection for calibration routine.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
 
 import cv2
+
+if TYPE_CHECKING:
+    from pathlib import Path
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -20,7 +22,7 @@ logger = logging.getLogger(__name__)
 def detect_checkerboard(
     image: np.ndarray,
     pattern_size: tuple[int, int] = (9, 6),
-) -> Optional[tuple[np.ndarray, np.ndarray]]:
+) -> tuple[np.ndarray, np.ndarray] | None:
     """
     Detect checkerboard corners in a grayscale or BGR image.
 
@@ -47,7 +49,7 @@ def stereo_calibrate(
     left_points: list[tuple[np.ndarray, np.ndarray]],
     right_points: list[tuple[np.ndarray, np.ndarray]],
     image_size: tuple[int, int],
-) -> Optional[dict]:
+) -> dict | None:
     """
     Run cv2.stereoCalibrate and compute rectification maps.
 
@@ -65,7 +67,7 @@ def stereo_calibrate(
     return None
 
 
-def load_calibration(path: Path) -> Optional[dict]:
+def load_calibration(path: Path) -> dict | None:
     """Load calibration from file."""
     # TODO: Load npz or yaml
     return None
