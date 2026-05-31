@@ -35,10 +35,12 @@ source venv/bin/activate
 # Windows PowerShell:
 .\venv\Scripts\Activate.ps1
 
-# Install
-pip install -e ".[dev]"
+# Install (choose one)
+pip install -r requirements.txt          # runtime only
+pip install -r requirements-dev.txt      # runtime + dev tools (lint, test, etc.)
+pip install -e ".[dev]"                  # editable install with dev extras
 
-# Install pre-commit hooks
+# Install pre-commit hooks (if using dev setup)
 pre-commit install
 ```
 
@@ -80,6 +82,8 @@ See [HOW_TO_USE.txt](HOW_TO_USE.txt) for detailed operating instructions.
 ├── main.py               # CLI entry point (--verify, --gui)
 ├── camera_manager.py     # USB camera discovery, left/right/top assignment
 ├── gui.py                # PyQt6 GUI: previews, alignment, anaglyph
+├── compositor.py         # Anaglyph compositing (Wimmer, Dubois, half-color, gray)
+├── video_recorder.py     # Synchronized stereo MP4 recording
 ├── calibration.py        # Stereo calibration (checkerboard detection + WIP)
 ├── tests/
 │   ├── unit/             # Automated tests (no hardware required)
@@ -90,7 +94,8 @@ See [HOW_TO_USE.txt](HOW_TO_USE.txt) for detailed operating instructions.
 ├── .github/workflows/
 │   └── ci.yml            # Lint + test matrix (Python 3.11, 3.12)
 ├── pyproject.toml        # PEP 621 project metadata
-├── requirements.txt      # Legacy dependency list
+├── requirements.txt      # Runtime dependencies
+├── requirements-dev.txt  # Dev dependencies (includes requirements.txt)
 └── HOW_TO_USE.txt        # Detailed operating instructions
 ```
 
@@ -116,9 +121,9 @@ pytest tests/hardware/ -v --hardware
 
 ## Roadmap
 
+- [x] Dubois / half-color / gray anaglyph methods
+- [x] Video recording (synchronized stereo MP4)
 - [ ] Full stereo calibration (rectification maps, undistortion)
-- [ ] Dubois / half-color / gray anaglyph methods
-- [ ] Video recording (synchronized stereo MP4)
 - [ ] Z-stack acquisition with guided focal sweep
 - [ ] Focus stacking (Laplacian pyramid)
 - [ ] Web gallery export

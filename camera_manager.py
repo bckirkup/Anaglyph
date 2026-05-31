@@ -308,20 +308,44 @@ class CameraManager:
             return False
 
         def open_one(info: CameraInfo, retries: int = 2) -> cv2.VideoCapture | None:
-            for attempt in range(retries):
-                cap = cv2.VideoCapture(info.index, info.backend)
-                if cap.isOpened():
-                    if width is not None:
-                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-                    if height is not None:
-                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-                    if fps is not None:
-                        cap.set(cv2.CAP_PROP_FPS, fps)
-                    return cap
-                cap.release()
-                if attempt < retries - 1:
-                    time.sleep(0.25)
-            logger.error("Failed to open camera: %s (index=%s, backend=%s)", info.name, info.index, info.backend)
+            # Try the discovered backend first, then fall back to alternatives
+            backends = [info.backend]
+            if info.backend == cv2.CAP_MSMF:
+                backends.append(cv2.CAP_DSHOW)
+            elif info.backend == cv2.CAP_DSHOW:
+                backends.append(cv2.CAP_MSMF)
+            # Also try without specifying backend as last resort
+            backends.append(cv2.CAP_ANY)
+
+            for backend in backends:
+                for attempt in range(retries):
+                    cap = cv2.VideoCapture(info.index, backend)
+                    if cap.isOpened():
+                        # Set MJPEG to reduce USB bandwidth (critical for multiple cameras)
+                        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+                        if width is not None:
+                            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                        if height is not None:
+                            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                        if fps is not None:
+                            cap.set(cv2.CAP_PROP_FPS, fps)
+                        if backend != info.backend:
+                            logger.info(
+                                "Opened %s with fallback backend %s (discovered as %s)",
+                                info.name,
+                                backend,
+                                info.backend,
+                            )
+                        return cap
+                    cap.release()
+                    if attempt < retries - 1:
+                        time.sleep(0.25)
+            logger.error(
+                "Failed to open camera: %s (index=%s, tried backends=%s)",
+                info.name,
+                info.index,
+                backends,
+            )
             return None
 
         # Open top first (often DSHOW/MU503), then left/right, so all get a chance to init
