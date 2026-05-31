@@ -19,9 +19,7 @@ logging.basicConfig(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Anaglyph Stereoscope - Live 3D from dual AmScope MD500L cameras"
-    )
+    parser = argparse.ArgumentParser(description="Anaglyph Stereoscope - Live 3D from dual AmScope MD500L cameras")
     parser.add_argument(
         "--verify",
         action="store_true",
@@ -39,6 +37,7 @@ def main() -> int:
 
     if args.gui:
         from gui import run_gui
+
         return run_gui()
 
     # Default: verify hardware

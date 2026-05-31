@@ -1,51 +1,129 @@
 # Anaglyph Stereoscope
 
-A modular Windows 11 Python application for aligning two AmScope MD500L cameras into a live 3D anaglyph (Cyan/Magenta) video stream. Optionally supports an AmScope MU503 (top-down USB3.0 camera) as a third view.
+Live 3D red-cyan anaglyph compositing from dual-camera stereoscopes.
+
+Manages two AmScope MD500L cameras (left/right stereo pair) and an optional
+AmScope MU503 (top-down USB 3.0 camera) attached to a trinocular stereoscope.
+Produces real-time anaglyph video for viewing with red/cyan 3D glasses.
+
+## Features
+
+- **Live anaglyph preview** — real-time red-cyan compositing with overlap cropping
+- **ORB-based alignment** — automatic rotation, scale, and translation estimation
+- **Focus stoplights** — Laplacian-variance sharpness indicator per camera
+- **Three-way overlay** — grayscale blend of all cameras aligned to a common reference
+- **Lock/unlock transforms** — freeze alignment while changing slides
+- **Still capture** — save overlay and anaglyph as JPEG
+- **Persistent camera mapping** — left/right assignment by VID/PID survives restarts
+
+## Requirements
+
+- Python 3.10+
+- Two USB cameras (AmScope MD500L or any UVC-compliant pair)
+- Optional: AmScope MU503 (top-down camera)
+- Red/cyan 3D glasses for anaglyph viewing
+
+## Setup
+
+```bash
+# Create virtual environment
+python -m venv venv
+
+# Activate (choose your platform)
+# Linux/macOS:
+source venv/bin/activate
+# Windows PowerShell:
+.\venv\Scripts\Activate.ps1
+
+# Install
+pip install -e ".[dev]"
+
+# Install pre-commit hooks
+pre-commit install
+```
+
+### Platform-Specific Notes
+
+**Linux**: If multiple USB cameras fail with `ENOSPC`, increase the USB
+buffer:
+
+```bash
+sudo sh -c 'echo 256 > /sys/module/uvcvideo/parameters/usbfs_memory_mb'
+```
+
+**Windows**: The `cv2-enumerate-cameras` package is recommended for
+reliable VID/PID discovery. Install with:
+
+```bash
+pip install -e ".[enumerate]"
+```
+
+## Usage
+
+### Verify camera detection
+
+```bash
+python main.py --verify
+```
+
+### Launch GUI
+
+```bash
+python main.py --gui
+```
+
+See [HOW_TO_USE.txt](HOW_TO_USE.txt) for detailed operating instructions.
 
 ## Project Structure
 
 ```
-.
-├── requirements.txt      # Dependencies
-├── main.py               # Entry point (--verify, --gui)
-├── camera_manager.py     # HW access, VID/PID discovery, Left/Right persistence
-├── calibration.py        # Stereo calibration (stereoCalibrate, rectify maps)
-├── gui.py                # PyQt6 GUI (Calibration / Live 3D modes)
-├── camera_config.json    # Auto-generated: Left/Right camera mapping
-└── README.md
+├── main.py               # CLI entry point (--verify, --gui)
+├── camera_manager.py     # USB camera discovery, left/right/top assignment
+├── gui.py                # PyQt6 GUI: previews, alignment, anaglyph
+├── calibration.py        # Stereo calibration (checkerboard detection + WIP)
+├── tests/
+│   ├── unit/             # Automated tests (no hardware required)
+│   └── hardware/         # Prompted human-in-the-loop tests
+├── docs/
+│   ├── architecture.md   # Module design and data flow
+│   └── hardware_guide.md # Camera setup, wiring, USB topology
+├── .github/workflows/
+│   └── ci.yml            # Lint + test matrix (Python 3.11, 3.12)
+├── pyproject.toml        # PEP 621 project metadata
+├── requirements.txt      # Legacy dependency list
+└── HOW_TO_USE.txt        # Detailed operating instructions
 ```
 
-## Setup
+## Development
 
-```powershell
-cd "c:\Users\bckir\OneDrive\Documents\Anaglyph Program FEB2026"
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+### Lint & type check
+
+```bash
+ruff check .
+ruff format --check .
+mypy main.py camera_manager.py calibration.py gui.py --ignore-missing-imports
 ```
 
-## Verify Hardware Access
+### Run tests
 
-With both AmScope MD500L cameras connected:
+```bash
+# Unit + integration tests (no cameras needed)
+pytest tests/ -v -m "not hardware"
 
-```powershell
-python main.py --verify
+# Hardware tests (requires cameras + human operator)
+pytest tests/hardware/ -v --hardware
 ```
 
-Or run the camera manager directly:
+## Roadmap
 
-```powershell
-python camera_manager.py
-```
+- [ ] Full stereo calibration (rectification maps, undistortion)
+- [ ] Dubois / half-color / gray anaglyph methods
+- [ ] Video recording (synchronized stereo MP4)
+- [ ] Z-stack acquisition with guided focal sweep
+- [ ] Focus stacking (Laplacian pyramid)
+- [ ] Web gallery export
+- [ ] Cross-platform camera enumerator (Linux sysfs, macOS IOKit)
 
-This will:
-1. Discover cameras via VID/PID (using `cv2-enumerate-cameras`), including DSHOW for the MU503
-2. Assign Left and Right (MD500L stereo pair) and optional Top (MU503 top-down) based on persisted config
-3. Open all captures and read a test frame
-4. Save the mapping to `camera_config.json` for consistent assignment on restart
+## License
 
-## Next Steps
-
-- **Calibration**: Implement full stereo calibration in `calibration.py`
-- **Anaglyph Engine**: Cyan/Magenta overlay with rectification
-- **GUI**: Mode toggle, still capture (JPG), video record (MP4)
+[GNU General Public License v3.0](LICENSE)
