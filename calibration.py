@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def detect_checkerboard(
     image: np.ndarray,
-    pattern_size: tuple[int, int] = (9, 6),
+    pattern_size: tuple[int, int] = (5, 4),
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """
     Detect checkerboard corners in a grayscale or BGR image.
@@ -73,7 +73,7 @@ class CalibrationResult:
 class CalibrationSession:
     """Accumulates checkerboard poses for calibration."""
 
-    pattern_size: tuple[int, int] = (9, 6)
+    pattern_size: tuple[int, int] = (5, 4)
     left_detections: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
     right_detections: list[tuple[np.ndarray, np.ndarray]] = field(default_factory=list)
 
