@@ -12,6 +12,20 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from compositor import (
+    AlignmentMetrics,
+    AnaglyphMethod,
+    affine_to_metrics,
+    apply_180_flip_to_transform,
+    build_anaglyph,
+    build_three_way_overlay,
+    compose_affine,
+    compute_alignment,
+    compute_sharpness,
+    invert_affine,
+    normalize_rotation_deg,
+)
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -21,6 +35,7 @@ try:
         QApplication,
         QButtonGroup,
         QCheckBox,
+        QComboBox,
         QFileDialog,
         QGroupBox,
         QHBoxLayout,
@@ -50,221 +65,22 @@ class SetupState:
     shutter_top: bool = True  # True = top+right open, False = left+right open
 
 
-@dataclass
-class AlignmentMetrics:
-    """Rotation (deg), scale (ratio), translation (px) between two images."""
-
-    rotation_deg: float = 0.0
-    scale: float = 1.0
-    tx: float = 0.0
-    ty: float = 0.0
-    score: float = 0.0  # 0-100, higher = better aligned
-    valid: bool = False
-
-
-def _affine_to_metrics(M: np.ndarray) -> AlignmentMetrics:
-    """Decompose 2x3 similarity matrix into AlignmentMetrics. Rotation normalized to [-180,180]."""
-    out = AlignmentMetrics()
-    if M is None or M.size == 0:
-        return out
-    a, b, tx = M[0]
-    c, d, ty = M[1]
-    scale = np.sqrt(a * a + c * c)
-    rotation_rad = np.arctan2(c, a)
-    rotation_deg = _normalize_rotation_deg(np.degrees(rotation_rad))
-    out.rotation_deg = float(rotation_deg)
-    out.scale = float(scale)
-    out.tx = float(tx)
-    out.ty = float(ty)
-    out.valid = True
-    rot_penalty = min(abs(rotation_deg) * 2, 50)
-    scale_penalty = min(abs(1.0 - scale) * 100, 30)
-    trans_penalty = min(np.sqrt(tx * tx + ty * ty) * 0.1, 20)
-    out.score = max(0, 100 - rot_penalty - scale_penalty - trans_penalty)
-    return out
-
-
-def _compose_affine(M1: np.ndarray, M2: np.ndarray) -> np.ndarray:
-    """Compose two 2x3 affine matrices: result maps via M1 then M2 (M2 @ M1)."""
-    R1, t1 = M1[:, :2], M1[:, 2:3]
-    R2, t2 = M2[:, :2], M2[:, 2:3]
-    R = R2 @ R1
-    t = R2 @ t1 + t2
-    return np.hstack([R, t])
-
-
-def _invert_affine(M: np.ndarray) -> np.ndarray:
-    """Invert a 2x3 similarity matrix."""
-    R, t = M[:, :2], M[:, 2:3]
-    R_inv = np.linalg.inv(R)
-    t_inv = -R_inv @ t
-    return np.hstack([R_inv, t_inv])
-
-
-def _normalize_rotation_deg(deg: float) -> float:
-    """Normalize angle to [-180, 180]."""
-    d = deg % 360.0
-    if d > 180:
-        d -= 360
-    elif d <= -180:
-        d += 360
-    return d
-
-
-def _apply_180_flip_to_transform(M: np.ndarray, src_w: int, src_h: int) -> np.ndarray:
-    """Apply 180° rotation around source image center. M maps src -> dst; result is M ∘ F with F = 180° around (src_w/2, src_h/2)."""
-    R, t = M[:, :2], M[:, 2:3]
-    cx, cy = src_w / 2.0, src_h / 2.0
-    # F: p' = -p + [2*cx, 2*cy]. So F = [-I | 2*c]
-    R_flip = -np.eye(2)
-    t_flip = np.array([[2 * cx], [2 * cy]])
-    R_new = R @ R_flip
-    t_new = R @ t_flip + t
-    return np.hstack([R_new, t_new])
-
-
-def compute_alignment(img1: np.ndarray, img2: np.ndarray) -> tuple[AlignmentMetrics, np.ndarray | None]:
-    """
-    Estimate similarity transform (rotation, scale, translation) from img1 to img2.
-    Returns (metrics, 2x3 matrix in original image coords) or (invalid, None).
-    """
-    out = AlignmentMetrics()
-    if img1 is None or img2 is None or img1.size == 0 or img2.size == 0:
-        return out, None
-    gray1 = cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY) if len(img1.shape) == 3 else img1
-    gray2 = cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY) if len(img2.shape) == 3 else img2
-    h1, w1 = gray1.shape
-    h2, w2 = gray2.shape
-    if min(h1, w1, h2, w2) < 32:
-        return out, None
-    target = 320
-    r1, r2 = 1.0, 1.0
-    if max(w1, h1) > target or max(w2, h2) > target:
-        r1 = target / max(w1, h1)
-        r2 = target / max(w2, h2)
-        gray1 = cv2.resize(gray1, None, fx=r1, fy=r1)
-        gray2 = cv2.resize(gray2, None, fx=r2, fy=r2)
-    orb = cv2.ORB_create(nfeatures=800)
-    kp1, d1 = orb.detectAndCompute(gray1, None)
-    kp2, d2 = orb.detectAndCompute(gray2, None)
-    if d1 is None or d2 is None or len(kp1) < 4 or len(kp2) < 4:
-        return out, None
-    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-    matches = bf.match(d1, d2)
-    if len(matches) < 4:
-        return out, None
-    matches = sorted(matches, key=lambda m: m.distance)[:80]
-    pts1 = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
-    pts2 = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
-    try:
-        M, inliers = cv2.estimateAffinePartial2D(pts1, pts2)
-    except cv2.error:
-        return out, None
-    if M is None:
-        return out, None
-    # Scale M from resized coords to full image coords: p2_resized = M @ p1_resized, p1_resized = r1*p1_full, p2_full = p2_resized/r2 => M_full: R_full = (r1/r2)*R, t_full = t/r2
-    if r1 != 1.0 or r2 != 1.0:
-        scale = r1 / r2
-        M = np.array(
-            [[M[0, 0] * scale, M[0, 1] * scale, M[0, 2] / r2], [M[1, 0] * scale, M[1, 1] * scale, M[1, 2] / r2]],
-            dtype=np.float64,
-        )
-    out = _affine_to_metrics(M)
-    return out, M
+# Legacy aliases for any external code referencing the old private names
+_affine_to_metrics = affine_to_metrics
+_compose_affine = compose_affine
+_invert_affine = invert_affine
+_normalize_rotation_deg = normalize_rotation_deg
+_apply_180_flip_to_transform = apply_180_flip_to_transform
 
 
 def build_anaglyph_overlap(
     left_bgr: np.ndarray,
     right_bgr: np.ndarray,
     M_right_to_left: np.ndarray,
+    method: AnaglyphMethod = AnaglyphMethod.WIMMER,
 ) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None]:
-    """
-    Build red-cyan anaglyph for red/cyan glasses. Left eye sees red (left image),
-    right eye sees cyan (right image). Crop to overlap so no big single-color regions.
-    M_right_to_left: 2x3 affine mapping right image coords to left image coords.
-    Returns (anaglyph_bgr, roi (x,y,w,h)) or (None, None).
-    """
-    if left_bgr is None or right_bgr is None or M_right_to_left is None:
-        return None, None
-    h_l, w_l = left_bgr.shape[:2]
-    h_r, w_r = right_bgr.shape[:2]
-    if min(h_l, w_l, h_r, w_r) < 8:
-        return None, None
-    right_warped = cv2.warpAffine(right_bgr, M_right_to_left, (w_l, h_l))
-    left_g = cv2.cvtColor(left_bgr, cv2.COLOR_BGR2GRAY)
-    right_g = cv2.cvtColor(right_warped, cv2.COLOR_BGR2GRAY)
-    # Red-cyan encoding: R = left (red filter = left eye), G = B = right (cyan = right eye)
-    out = np.zeros((h_l, w_l, 3), dtype=np.uint8)
-    out[:, :, 0] = right_g  # B
-    out[:, :, 1] = right_g  # G  -> cyan = right image for right eye
-    out[:, :, 2] = left_g  # R  -> red = left image for left eye
-
-    # Crop to overlap region so there are no large areas of only red or only cyan
-    right_has_content = right_g > 16
-    if not np.any(right_has_content):
-        roi = (0, 0, w_l, h_l)
-        return out, roi
-    ys, xs = np.where(right_has_content)
-    x_min, x_max = int(np.clip(xs.min(), 0, w_l - 1)), int(np.clip(xs.max() + 1, 1, w_l))
-    y_min, y_max = int(np.clip(ys.min(), 0, h_l - 1)), int(np.clip(ys.max() + 1, 1, h_l))
-    # Slight inset to avoid thin single-color edges
-    margin = min(4, (x_max - x_min) // 8, (y_max - y_min) // 8)
-    x_min = min(x_min + margin, x_max - 1)
-    y_min = min(y_min + margin, y_max - 1)
-    x_max = max(x_max - margin, x_min + 1)
-    y_max = max(y_max - margin, y_min + 1)
-    roi = (x_min, y_min, x_max - x_min, y_max - y_min)
-    out = out[y_min:y_max, x_min:x_max]
-    return out, roi
-
-
-def build_three_way_overlay(
-    top_bgr: np.ndarray | None,
-    left_bgr: np.ndarray | None,
-    right_bgr: np.ndarray | None,
-    M_right_to_left: np.ndarray | None,
-    M_top_to_left: np.ndarray | None,
-    out_w: int = 420,
-    out_h: int = 280,
-) -> np.ndarray:
-    """
-    All three images entirely displayed and optimally overlaid in a common frame.
-    Uses left as reference; warps right and top into left space (or resizes if no transform), then blends.
-    """
-    if left_bgr is None:
-        out = np.ones((out_h, out_w), dtype=np.uint8) * 32
-        return cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
-    h_l, w_l = left_bgr.shape[:2]
-    left_g = cv2.cvtColor(left_bgr, cv2.COLOR_BGR2GRAY)
-    blend = left_g.astype(np.float32)
-    count = np.ones(left_g.shape, dtype=np.float32)
-    if right_bgr is not None:
-        if M_right_to_left is not None:
-            right_w = cv2.warpAffine(right_bgr, M_right_to_left, (w_l, h_l))
-        else:
-            right_w = cv2.resize(right_bgr, (w_l, h_l))
-        right_g = cv2.cvtColor(right_w, cv2.COLOR_BGR2GRAY)
-        blend += right_g.astype(np.float32)
-        count += 1.0
-    if top_bgr is not None:
-        if M_top_to_left is not None:
-            top_w = cv2.warpAffine(top_bgr, M_top_to_left, (w_l, h_l))
-        else:
-            top_w = cv2.resize(top_bgr, (w_l, h_l))
-        top_g = cv2.cvtColor(top_w, cv2.COLOR_BGR2GRAY)
-        blend += top_g.astype(np.float32)
-        count += 1.0
-    out = np.clip(blend / np.maximum(count, 1), 0, 255).astype(np.uint8)
-    out = cv2.resize(out, (out_w, out_h))
-    return cv2.cvtColor(out, cv2.COLOR_GRAY2BGR)
-
-
-def compute_sharpness(frame: np.ndarray) -> float:
-    """Laplacian variance - higher = sharper. Used for focus indicator."""
-    if frame is None or frame.size == 0:
-        return 0.0
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if len(frame.shape) == 3 else frame
-    return float(cv2.Laplacian(gray, cv2.CV_64F, ksize=3).var())
+    """Thin wrapper around compositor.build_anaglyph for backward compatibility."""
+    return build_anaglyph(left_bgr, right_bgr, M_right_to_left, method)
 
 
 def cv2_to_qimage(frame: np.ndarray) -> QImage:
@@ -335,6 +151,8 @@ class CameraSetupWindow(QMainWindow):
         self._stereo_overlap_roi: tuple[int, int, int, int] | None = None
         self._M_top_to_left: np.ndarray | None = None
         self._transforms_locked: bool = False
+        self._anaglyph_method: AnaglyphMethod = AnaglyphMethod.WIMMER
+        self._video_recorder = None  # lazy import to avoid circular deps
         self._setup_ui()
         self._init_cameras()
         self._align_timer = QTimer(self)
@@ -502,6 +320,17 @@ class CameraSetupWindow(QMainWindow):
         shutter_layout.addWidget(self._rb_shutter_left_right)
         layout.addWidget(shutter_group)
 
+        # Anaglyph method selector
+        method_group = QGroupBox("Anaglyph Method")
+        method_layout = QHBoxLayout(method_group)
+        self._method_combo = QComboBox()
+        for m in AnaglyphMethod:
+            self._method_combo.addItem(m.value.replace("_", " ").title(), m)
+        self._method_combo.setCurrentIndex(0)
+        self._method_combo.currentIndexChanged.connect(self._on_method_changed)
+        method_layout.addWidget(self._method_combo)
+        layout.addWidget(method_group)
+
         # Lock / Unlock transforms (replaces Continue)
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
@@ -511,6 +340,19 @@ class CameraSetupWindow(QMainWindow):
         self._btn_lock.clicked.connect(self._on_lock_toggle)
         btn_layout.addWidget(self._btn_lock)
         layout.addLayout(btn_layout)
+
+        # Video recording controls
+        video_group = QGroupBox("Video Recording")
+        video_layout = QHBoxLayout(video_group)
+        self._btn_record = QPushButton("Record")
+        self._btn_record.setMinimumWidth(100)
+        self._btn_record.setStyleSheet("color: red; font-weight: bold;")
+        self._btn_record.setToolTip("Start/stop stereo video recording (left, right, and anaglyph MP4)")
+        self._btn_record.clicked.connect(self._on_record_toggle)
+        video_layout.addWidget(self._btn_record)
+        self._record_status = QLabel("")
+        video_layout.addWidget(self._record_status)
+        layout.addWidget(video_group)
 
     def _init_cameras(self) -> None:
         from camera_manager import CameraManager
@@ -623,7 +465,9 @@ class CameraSetupWindow(QMainWindow):
                 self._stereo_M_right_to_left = M_lr.copy()
                 left_img = self._last_frame.get("left")
                 if left_img is not None:
-                    anag, roi = build_anaglyph_overlap(left_img, self._last_frame.get("right"), M_lr)
+                    anag, roi = build_anaglyph_overlap(
+                        left_img, self._last_frame.get("right"), M_lr, self._anaglyph_method
+                    )
                     if roi is not None:
                         self._stereo_overlap_roi = roi
 
@@ -721,7 +565,7 @@ class CameraSetupWindow(QMainWindow):
             left_img = self._last_frame.get("left")
             right_img = self._last_frame.get("right")
             if M is not None and left_img is not None and right_img is not None:
-                anag, _ = build_anaglyph_overlap(left_img, right_img, M)
+                anag, _ = build_anaglyph_overlap(left_img, right_img, M, self._anaglyph_method)
                 if anag is not None:
                     img = cv2_to_qimage(anag)
                     self._anaglyph_label.setPixmap(
@@ -799,6 +643,13 @@ class CameraSetupWindow(QMainWindow):
             self._display_frame(cam_id, frame)
         elif self._shutter_open(cam_id):
             self._display_frame(cam_id, frame)
+        # Feed frames to video recorder when recording
+        if self._video_recorder is not None and self._video_recorder.is_recording and cam_id == "right":
+            self._video_recorder.add_frame(
+                self._last_frame.get("left"),
+                self._last_frame.get("right"),
+                self._stereo_M_right_to_left,
+            )
 
     def _on_lock_toggle(self) -> None:
         """Lock or unlock alignment transforms. When locked, changing slides won't change alignments."""
@@ -814,8 +665,51 @@ class CameraSetupWindow(QMainWindow):
                 "Freeze alignment transforms so you can change slides without changing alignments."
             )
 
+    def _on_method_changed(self, index: int) -> None:
+        """Update anaglyph compositing method from combo box selection."""
+        method = self._method_combo.itemData(index)
+        if method is not None:
+            self._anaglyph_method = method
+
+    def _on_record_toggle(self) -> None:
+        """Start or stop video recording."""
+        from video_recorder import StereoVideoRecorder
+
+        if self._video_recorder is not None and self._video_recorder.is_recording:
+            stats = self._video_recorder.stop()
+            self._btn_record.setText("Record")
+            self._btn_record.setStyleSheet("color: red; font-weight: bold;")
+            self._record_status.setText(f"Saved: {stats.left_frames} frames, {stats.duration_sec:.1f}s")
+            QMessageBox.information(
+                self,
+                "Recording Complete",
+                f"Saved to: {stats.output_dir}\n"
+                f"Duration: {stats.duration_sec:.1f}s\n"
+                f"Left frames: {stats.left_frames}\n"
+                f"Right frames: {stats.right_frames}\n"
+                f"Dropped: {stats.dropped_frames}\n"
+                f"Max drift: {stats.max_drift_ms:.1f}ms",
+            )
+            return
+
+        left_frame = self._last_frame.get("left")
+        if left_frame is None:
+            QMessageBox.warning(self, "Cannot Record", "No camera frames available.")
+            return
+        h, w = left_frame.shape[:2]
+        self._video_recorder = StereoVideoRecorder(
+            output_dir="./captures",
+            anaglyph_method=self._anaglyph_method,
+        )
+        session_dir = self._video_recorder.start(width=w, height=h, fps=15.0)
+        self._btn_record.setText("Stop")
+        self._btn_record.setStyleSheet("color: white; background: red; font-weight: bold;")
+        self._record_status.setText(f"Recording to {session_dir.name}...")
+
     def _on_end_program(self) -> None:
         """Quit the application."""
+        if self._video_recorder is not None and self._video_recorder.is_recording:
+            self._video_recorder.stop()
         QApplication.quit()
 
     def _save_overlay_jpg(self) -> None:
@@ -862,7 +756,7 @@ class CameraSetupWindow(QMainWindow):
             QMessageBox.warning(self, "Save failed", "No anaglyph available (need left/right frames and alignment).")
             return
         try:
-            anag, _ = build_anaglyph_overlap(left_img, right_img, M)
+            anag, _ = build_anaglyph_overlap(left_img, right_img, M, self._anaglyph_method)
             if anag is not None and anag.size > 0:
                 cv2.imwrite(path, anag, [cv2.IMWRITE_JPEG_QUALITY, 95])
                 QMessageBox.information(self, "Saved", f"Anaglyph saved to:\n{path}")
@@ -875,6 +769,8 @@ class CameraSetupWindow(QMainWindow):
         return self._state
 
     def closeEvent(self, event) -> None:
+        if self._video_recorder is not None and self._video_recorder.is_recording:
+            self._video_recorder.stop()
         if hasattr(self, "_align_timer"):
             self._align_timer.stop()
         if hasattr(self, "_anaglyph_timer"):
