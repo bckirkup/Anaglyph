@@ -217,6 +217,36 @@ def compute_sharpness(frame: np.ndarray | None) -> float:
 # ---------------------------------------------------------------------------
 
 
+def strip_translation(M: np.ndarray) -> np.ndarray:
+    """Remove translation from a 2x3 affine, keeping rotation+scale only.
+
+    The resulting transform rotates/scales around the image center so the
+    right-eye image is rotationally aligned but horizontal parallax (the
+    stereo depth cue) is preserved.
+    """
+    R = M[:, :2].copy()
+    # Rotation+scale around center: t' = center - R @ center
+    # We don't know the image size here, so return a zero-translation
+    # version; the caller should use center_rotation_affine() instead
+    # for center-relative rotation.
+    return np.hstack([R, np.zeros((2, 1))])
+
+
+def center_rotation_affine(M: np.ndarray, w: int, h: int) -> np.ndarray:
+    """Build a 2x3 affine that applies M's rotation+scale around image center.
+
+    Translation is removed so that stereo parallax (horizontal disparity
+    between left and right eyes) is preserved — this is the depth cue that
+    red/cyan glasses decode.
+    """
+    R = M[:, :2].copy()
+    cx, cy = w / 2.0, h / 2.0
+    center = np.array([[cx], [cy]])
+    # Rotate around center: new_point = R @ (point - center) + center
+    t = center - R @ center
+    return np.hstack([R, t])
+
+
 def build_anaglyph(
     left_bgr: np.ndarray,
     right_bgr: np.ndarray,
@@ -225,6 +255,10 @@ def build_anaglyph(
 ) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None]:
     """
     Build anaglyph image for red/cyan glasses.
+
+    The alignment transform is used for rotation+scale correction only;
+    translation is stripped so that horizontal stereo parallax is preserved.
+    This parallax is what creates the 3D depth effect through red/cyan glasses.
 
     Args:
         left_bgr: Left camera frame (BGR).
@@ -242,7 +276,9 @@ def build_anaglyph(
     if min(h_l, w_l, h_r, w_r) < 8:
         return None, None
 
-    right_warped = cv2.warpAffine(right_bgr, M_right_to_left, (w_l, h_l))
+    # Strip translation to preserve stereo parallax; only correct rotation+scale
+    M_rot_only = center_rotation_affine(M_right_to_left, w_r, h_r)
+    right_warped = cv2.warpAffine(right_bgr, M_rot_only, (w_l, h_l))
 
     if method == AnaglyphMethod.WIMMER:
         out = _anaglyph_wimmer(left_bgr, right_warped)

@@ -50,9 +50,9 @@ between any pair of views without a calibration step.
 
 ### Shutter Model
 
-The trinocular head has a physical beam splitter. The "shutter" radio
-buttons tell the software which cameras currently have an optical path
-(top+right vs left+right), so alignment is only computed for live pairs.
+The trinocular head has a physical slider. The radio buttons tell the
+software which cameras currently have an optical path (top-down OR
+left+right eyepieces), so alignment is only computed for live pairs.
 
 ### Lock/Unlock
 
@@ -60,17 +60,40 @@ When examining a sample, the operator locks the current transforms.
 New frames are composited using the frozen alignment so changing the
 slide doesn't break the anaglyph.
 
+### Parallax Preservation
+
+The anaglyph compositor strips translation from the alignment transform
+(`center_rotation_affine`), keeping only rotation and scale correction.
+This preserves horizontal stereo disparity — the depth cue that
+red/cyan glasses decode.
+
+### Stereo Calibration
+
+`calibration.py` provides full OpenCV stereo calibration:
+- `CalibrationSession` — accumulates checkerboard poses from both cameras
+- `stereo_calibrate()` — runs `cv2.stereoCalibrate` + `stereoRectify`
+- `apply_rectification()` — warps frames through undistort+rectify maps
+- Save/load to `.npz` files with JSON summary
+
+When calibration is loaded, rectification is applied to each frame
+before compositing, correcting lens distortion and aligning epipolar
+geometry.
+
+### Still Capture
+
+`still_capture.py` saves full-resolution stills (TIFF + JPEG) with
+JSON metadata (timestamp, cameras, anaglyph method, alignment params,
+calibration RMS).
+
 ## Future Architecture (Planned)
 
-### Phase 2: Capture Modes
-- `capture/still.py` — Full-resolution still with EXIF-like metadata
-- `capture/video.py` — Synchronized stereo video recording
-- `capture/zstack.py` — Guided focal sweep + Laplacian pyramid stacking
+### Z-Stack
+- Guided focal sweep acquisition + Laplacian pyramid stacking
 
-### Phase 3: Gallery
+### Gallery
 - `gallery/catalog.py` — SQLite capture catalog with tagging
 - `gallery/export.py` — Static HTML gallery generator
 
-### Phase 4: Cross-Platform
+### Cross-Platform
 - `camera/enumerator.py` — Platform-specific USB topology parsing
   (Linux sysfs, macOS IOKit, Windows SetupAPI)
