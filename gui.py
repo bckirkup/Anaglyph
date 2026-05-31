@@ -153,6 +153,7 @@ class CameraSetupWindow(QMainWindow):
         self._transforms_locked: bool = False
         self._anaglyph_method: AnaglyphMethod = AnaglyphMethod.WIMMER
         self._video_recorder = None  # lazy import to avoid circular deps
+        self._calibration = None  # CalibrationResult when loaded/computed
         self._setup_ui()
         self._init_cameras()
         self._align_timer = QTimer(self)
@@ -275,7 +276,7 @@ class CameraSetupWindow(QMainWindow):
         return row
 
     def _setup_menu_bar(self) -> None:
-        """Add menu bar: File (End program, Save overlay/anaglyph as JPG)."""
+        """Add menu bar: File, Capture, Calibration."""
         menubar = QMenuBar(self)
         self.setMenuBar(menubar)
         file_menu = QMenu("&File", self)
@@ -288,6 +289,24 @@ class CameraSetupWindow(QMainWindow):
         act_save_overlay.triggered.connect(self._save_overlay_jpg)
         act_save_anaglyph = file_menu.addAction("Save ana&glyph as JPG...")
         act_save_anaglyph.triggered.connect(self._save_anaglyph_jpg)
+
+        # Capture menu
+        capture_menu = QMenu("&Capture", self)
+        menubar.addMenu(capture_menu)
+        act_capture_still = capture_menu.addAction("Capture &Still Set (TIFF+JPG)")
+        act_capture_still.setShortcut("Ctrl+S")
+        act_capture_still.triggered.connect(self._capture_still_set)
+
+        # Calibration menu
+        calib_menu = QMenu("C&alibration", self)
+        menubar.addMenu(calib_menu)
+        act_start_calib = calib_menu.addAction("Start &Calibration Wizard...")
+        act_start_calib.setShortcut("Ctrl+K")
+        act_start_calib.triggered.connect(self._start_calibration_wizard)
+        act_load_calib = calib_menu.addAction("&Load Calibration...")
+        act_load_calib.triggered.connect(self._load_calibration_file)
+        act_save_calib = calib_menu.addAction("&Save Calibration...")
+        act_save_calib.triggered.connect(self._save_calibration_file)
 
     def _setup_ui_controls(self, layout: QVBoxLayout) -> None:
         """Add focus checkboxes, shutter radio, and continue button."""
@@ -339,18 +358,35 @@ class CameraSetupWindow(QMainWindow):
         btn_layout.addWidget(self._btn_lock)
         layout.addLayout(btn_layout)
 
-        # Video recording controls
-        video_group = QGroupBox("Video Recording")
-        video_layout = QHBoxLayout(video_group)
+        # Capture controls
+        capture_group = QGroupBox("Capture")
+        capture_layout = QHBoxLayout(capture_group)
+        self._btn_capture_still = QPushButton("Capture Still")
+        self._btn_capture_still.setMinimumWidth(100)
+        self._btn_capture_still.setToolTip("Capture full-resolution stills (TIFF+JPG) — Ctrl+S")
+        self._btn_capture_still.clicked.connect(self._capture_still_set)
+        capture_layout.addWidget(self._btn_capture_still)
         self._btn_record = QPushButton("Record")
         self._btn_record.setMinimumWidth(100)
         self._btn_record.setStyleSheet("color: red; font-weight: bold;")
         self._btn_record.setToolTip("Start/stop stereo video recording (left, right, and anaglyph MP4)")
         self._btn_record.clicked.connect(self._on_record_toggle)
-        video_layout.addWidget(self._btn_record)
+        capture_layout.addWidget(self._btn_record)
         self._record_status = QLabel("")
-        video_layout.addWidget(self._record_status)
-        layout.addWidget(video_group)
+        capture_layout.addWidget(self._record_status)
+        layout.addWidget(capture_group)
+
+        # Calibration
+        calib_group = QGroupBox("Calibration")
+        calib_layout = QHBoxLayout(calib_group)
+        self._btn_calibrate = QPushButton("Calibrate...")
+        self._btn_calibrate.setMinimumWidth(100)
+        self._btn_calibrate.setToolTip("Start stereo calibration wizard — Ctrl+K")
+        self._btn_calibrate.clicked.connect(self._start_calibration_wizard)
+        calib_layout.addWidget(self._btn_calibrate)
+        self._calib_status = QLabel("Not calibrated")
+        calib_layout.addWidget(self._calib_status)
+        layout.addWidget(calib_group)
 
     def _init_cameras(self) -> None:
         from camera_manager import CameraManager
@@ -635,6 +671,14 @@ class CameraSetupWindow(QMainWindow):
     def _on_frame(self, cam_id: str, frame: np.ndarray) -> None:
         if frame is None or frame.size == 0:
             return
+        # Apply rectification if calibration is loaded
+        if self._calibration is not None:
+            from calibration import apply_rectification
+
+            if cam_id == "left" and self._calibration.map_l is not None:
+                frame = apply_rectification(frame, self._calibration.map_l)
+            elif cam_id == "right" and self._calibration.map_r is not None:
+                frame = apply_rectification(frame, self._calibration.map_r)
         self._last_frame[cam_id] = frame.copy()
         sharpness = compute_sharpness(frame)
         self._update_stoplight(cam_id, sharpness)
@@ -765,6 +809,220 @@ class CameraSetupWindow(QMainWindow):
                 QMessageBox.warning(self, "Save failed", "Could not build anaglyph image.")
         except Exception as e:
             QMessageBox.critical(self, "Save failed", str(e))
+
+    # ------------------------------------------------------------------
+    # Still capture
+    # ------------------------------------------------------------------
+
+    def _capture_still_set(self) -> None:
+        """Capture full-resolution stills of all available frames."""
+        from pathlib import Path
+
+        from still_capture import CaptureMetadata, capture_still_set
+
+        left_img = self._last_frame.get("left")
+        right_img = self._last_frame.get("right")
+        M = getattr(self, "_stereo_M_right_to_left", None)
+        anag = None
+        if left_img is not None and right_img is not None and M is not None:
+            anag, _ = build_anaglyph(left_img, right_img, M, self._anaglyph_method)
+
+        if left_img is None and right_img is None:
+            QMessageBox.warning(self, "Capture", "No camera frames available.")
+            return
+
+        output_dir = Path("./captures/stills")
+        metadata = CaptureMetadata(
+            anaglyph_method=self._anaglyph_method.value,
+        )
+        if M is not None:
+            from compositor import affine_to_metrics as _atm
+
+            m = _atm(M)
+            metadata.alignment_rotation_deg = m.rotation_deg
+            metadata.alignment_scale = m.scale
+            metadata.alignment_tx = m.tx
+            metadata.alignment_ty = m.ty
+        if hasattr(self, "_calibration") and self._calibration is not None:
+            metadata.calibration_rms = self._calibration.rms_error
+
+        result = capture_still_set(
+            left_frame=left_img,
+            right_frame=right_img,
+            anaglyph_frame=anag,
+            output_dir=output_dir,
+            method=self._anaglyph_method.value,
+            metadata=metadata,
+            formats=(".tiff", ".jpg"),
+            top_frame=self._last_frame.get("top"),
+        )
+        if result is not None:
+            QMessageBox.information(
+                self,
+                "Capture Complete",
+                f"Saved {len(result.paths)} files to:\n{output_dir}\n\n"
+                f"Formats: TIFF + JPG\nMetadata: {result.metadata_path}",
+            )
+
+    # ------------------------------------------------------------------
+    # Calibration wizard
+    # ------------------------------------------------------------------
+
+    def _start_calibration_wizard(self) -> None:
+        """Run the calibration wizard: capture checkerboard poses, then calibrate."""
+        from calibration import CalibrationSession, stereo_calibrate
+
+        left_img = self._last_frame.get("left")
+        right_img = self._last_frame.get("right")
+        if left_img is None or right_img is None:
+            QMessageBox.warning(
+                self,
+                "Calibration",
+                "Both left and right cameras must be active.\n"
+                "Set the trinocular slider to 'Eyepieces' and wait for frames.",
+            )
+            return
+
+        # Step 1: Explain the process
+        reply = QMessageBox.question(
+            self,
+            "Stereo Calibration Wizard",
+            "This wizard will guide you through stereo calibration.\n\n"
+            "You will need a printed checkerboard pattern (9×6 inner corners).\n\n"
+            "Steps:\n"
+            "1. Place the checkerboard under the stereoscope\n"
+            "2. Click 'Capture Pose' to capture (need ≥5 poses)\n"
+            "3. Move/rotate the checkerboard between captures\n"
+            "4. Click 'Calibrate' when you have enough poses\n\n"
+            "Ready to start?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        session = CalibrationSession()
+        h, w = left_img.shape[:2]
+
+        # Step 2: Capture poses in a loop
+        while True:
+            reply = QMessageBox.question(
+                self,
+                f"Capture Pose ({session.num_poses} captured)",
+                f"Poses captured: {session.num_poses}\n"
+                f"(Need at least 5 for good calibration, 8-12 recommended)\n\n"
+                "Position the checkerboard and click 'Yes' to capture,\n"
+                "or 'No' to finish and calibrate.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                break
+
+            left_now = self._last_frame.get("left")
+            right_now = self._last_frame.get("right")
+            if left_now is None or right_now is None:
+                QMessageBox.warning(self, "Calibration", "Camera frames not available. Try again.")
+                continue
+
+            left_ok, right_ok = session.add_pose(left_now, right_now)
+            if left_ok and right_ok:
+                QMessageBox.information(
+                    self,
+                    "Pose Captured",
+                    f"Checkerboard detected in both cameras.\n"
+                    f"Total poses: {session.num_poses}\n\n"
+                    "Move the checkerboard to a new position/angle for the next pose.",
+                )
+            else:
+                msg_parts = []
+                if not left_ok:
+                    msg_parts.append("Left camera: checkerboard NOT detected")
+                if not right_ok:
+                    msg_parts.append("Right camera: checkerboard NOT detected")
+                QMessageBox.warning(
+                    self,
+                    "Detection Failed",
+                    "\n".join(msg_parts) + "\n\nMake sure the checkerboard is fully visible and well-lit.",
+                )
+
+        # Step 3: Calibrate
+        if session.num_poses < 3:
+            QMessageBox.warning(
+                self,
+                "Calibration",
+                f"Only {session.num_poses} poses captured (need ≥3).\nCalibration cancelled.",
+            )
+            return
+
+        result = stereo_calibrate(
+            session.left_detections,
+            session.right_detections,
+            (w, h),
+        )
+        if result is None:
+            QMessageBox.critical(
+                self,
+                "Calibration Failed",
+                "Stereo calibration failed. This can happen if:\n"
+                "- The checkerboard was not detected consistently\n"
+                "- The poses were too similar (try more variety)\n"
+                "- The images are too small or blurry",
+            )
+            return
+
+        self._calibration = result
+        self._calib_status.setText(f"RMS={result.rms_error:.3f} ({result.num_poses} poses)")
+        QMessageBox.information(
+            self,
+            "Calibration Complete",
+            f"Stereo calibration successful!\n\n"
+            f"RMS reprojection error: {result.rms_error:.4f}\n"
+            f"Poses used: {result.num_poses}\n"
+            f"Baseline: {np.linalg.norm(result.T):.2f} units\n"
+            f"Rectification maps: {'computed' if result.map_l is not None else 'not available'}\n\n"
+            "Use Calibration → Save to persist this calibration.",
+        )
+
+    def _load_calibration_file(self) -> None:
+        """Load a calibration from .npz file."""
+        from calibration import load_calibration
+
+        path, _ = QFileDialog.getOpenFileName(self, "Load Calibration", "", "NumPy archive (*.npz);;All files (*)")
+        if not path:
+            return
+        from pathlib import Path as _Path
+
+        result = load_calibration(_Path(path))
+        if result is None:
+            QMessageBox.critical(self, "Load Failed", f"Could not load calibration from:\n{path}")
+            return
+        self._calibration = result
+        self._calib_status.setText(f"RMS={result.rms_error:.3f} ({result.num_poses} poses)")
+        QMessageBox.information(
+            self,
+            "Calibration Loaded",
+            f"Loaded calibration from:\n{path}\n\n"
+            f"RMS error: {result.rms_error:.4f}\n"
+            f"Image size: {result.image_size}\n"
+            f"Poses: {result.num_poses}\n"
+            f"Rectification: {'available' if result.map_l is not None else 'not available'}",
+        )
+
+    def _save_calibration_file(self) -> None:
+        """Save current calibration to .npz file."""
+        from calibration import save_calibration
+
+        if not hasattr(self, "_calibration") or self._calibration is None:
+            QMessageBox.warning(self, "Save", "No calibration data. Run the wizard first.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Calibration", "stereo_calibration.npz", "NumPy archive (*.npz);;All files (*)"
+        )
+        if not path:
+            return
+        from pathlib import Path as _Path
+
+        save_calibration(self._calibration, _Path(path))
+        QMessageBox.information(self, "Saved", f"Calibration saved to:\n{path}")
 
     def get_state(self) -> SetupState | None:
         return self._state

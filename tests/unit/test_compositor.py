@@ -11,11 +11,13 @@ from compositor import (
     apply_180_flip_to_transform,
     build_anaglyph,
     build_three_way_overlay,
+    center_rotation_affine,
     compose_affine,
     compute_alignment,
     compute_sharpness,
     invert_affine,
     normalize_rotation_deg,
+    strip_translation,
 )
 
 # Aliases for backward-compat with existing test names
@@ -303,3 +305,62 @@ class TestAnaglyphMethods:
         for method in AnaglyphMethod:
             anag, roi = build_anaglyph(None, None, M, method)
             assert anag is None
+
+
+class TestParallaxPreservation:
+    """Test that anaglyph compositing preserves stereo parallax."""
+
+    def test_strip_translation_removes_tx_ty(self) -> None:
+        M = np.array([[1.0, 0.0, 50.0], [0.0, 1.0, 30.0]])
+        M_stripped = strip_translation(M)
+        np.testing.assert_array_almost_equal(M_stripped[:, :2], np.eye(2))
+        np.testing.assert_array_almost_equal(M_stripped[:, 2], [0, 0])
+
+    def test_strip_translation_keeps_rotation(self) -> None:
+        angle = np.radians(5)
+        R = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+        M = np.hstack([R, np.array([[100], [50]])])
+        M_stripped = strip_translation(M)
+        np.testing.assert_array_almost_equal(M_stripped[:, :2], R)
+
+    def test_center_rotation_affine_identity(self) -> None:
+        """Identity transform with translation should become pure identity."""
+        M = np.array([[1.0, 0.0, 50.0], [0.0, 1.0, 30.0]])
+        M_centered = center_rotation_affine(M, 640, 480)
+        # Pure identity rotation around center = identity
+        np.testing.assert_array_almost_equal(M_centered[:, :2], np.eye(2))
+        np.testing.assert_array_almost_equal(M_centered[:, 2], [0, 0])
+
+    def test_center_rotation_affine_preserves_rotation(self) -> None:
+        """Rotation should be preserved, applied around center."""
+        angle = np.radians(5)
+        R = np.array([[np.cos(angle), -np.sin(angle)], [np.sin(angle), np.cos(angle)]])
+        M = np.hstack([R, np.array([[100], [50]])])
+        w, h = 640, 480
+        M_centered = center_rotation_affine(M, w, h)
+        # Rotation part preserved
+        np.testing.assert_array_almost_equal(M_centered[:, :2], R)
+        # Center point should map to itself
+        cx, cy = w / 2.0, h / 2.0
+        center_in = np.array([cx, cy])
+        center_out = M_centered[:, :2] @ center_in + M_centered[:, 2]
+        np.testing.assert_array_almost_equal(center_out, center_in)
+
+    def test_anaglyph_with_translated_pair_has_color(self) -> None:
+        """With horizontal offset (parallax), anaglyph should show color, not grey."""
+        # Create identical L/R images with a horizontal shift
+        left = np.full((100, 200, 3), 128, dtype=np.uint8)
+        right = np.full((100, 200, 3), 128, dtype=np.uint8)
+        # Draw a white bar at different horizontal positions (simulating parallax)
+        left[:, 80:120, :] = 255
+        right[:, 90:130, :] = 255
+        # Identity transform with 10px horizontal offset
+        M = np.array([[1.0, 0.0, 10.0], [0.0, 1.0, 0.0]])
+        anag, _ = build_anaglyph(left, right, M, AnaglyphMethod.WIMMER)
+        assert anag is not None
+        # Since translation is stripped, the bar positions differ between L/R
+        # This means R≠G≠B at the bar edges → not pure greyscale
+        red = anag[:, :, 2]  # from left
+        cyan = anag[:, :, 0]  # from right (B channel)
+        # They should NOT be identical everywhere (parallax preserved)
+        assert not np.array_equal(red, cyan)
