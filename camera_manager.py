@@ -43,6 +43,7 @@ class CameraInfo:
     pid: int | None = None
     path: str | None = None
     key: str = ""  # Unique key: vid:pid:path or index for fallback
+    alt_backends: list[tuple[int, int]] = field(default_factory=list)  # [(backend, index), ...]
 
     def __post_init__(self) -> None:
         if not self.key:
@@ -120,22 +121,31 @@ class CameraManager:
         """
         Enumerate all available cameras with VID/PID when possible.
         Uses DSHOW in addition to MSMF so MU503 (often DSHOW-only) is discovered.
+        When the same physical camera appears under multiple backends (MSMF + DSHOW),
+        the alternative backend+index is stored in alt_backends for fallback opening.
 
         Returns list of CameraInfo sorted for stable ordering, deduplicated by path.
         """
         cameras: list[CameraInfo] = []
-        seen_paths: set[str] = set()
+        seen_paths: dict[str, CameraInfo] = {}
 
-        def add_unique(info) -> None:
+        def add_or_merge(info) -> None:
             path = (info.path or "").strip()
             vid = info.vid if hasattr(info, "vid") else None
             pid = info.pid if hasattr(info, "pid") else None
             # Dedupe by device instance (path up to #{GUID} - same physical camera)
             dedupe_key = path.split("#{")[0] if path else f"{vid}:{pid}:{id(info)}"
             if dedupe_key and dedupe_key in seen_paths:
+                # Same physical camera under a different backend — store as alternative
+                existing = seen_paths[dedupe_key]
+                existing.alt_backends.append((info.backend, info.index))
+                logger.debug(
+                    "Camera %r: added alt backend=%s index=%s",
+                    existing.name,
+                    info.backend,
+                    info.index,
+                )
                 return
-            if dedupe_key:
-                seen_paths.add(dedupe_key)
             ci = CameraInfo(
                 index=info.index,
                 backend=info.backend,
@@ -145,16 +155,18 @@ class CameraManager:
                 path=path or None,
             )
             cameras.append(ci)
+            if dedupe_key:
+                seen_paths[dedupe_key] = ci
 
         if HAS_ENUMERATE_CAMERAS:
             try:
                 # MSMF first (better for MD500L)
                 for info in enumerate_cameras(cv2.CAP_MSMF):
-                    add_unique(info)
+                    add_or_merge(info)
                 # DSHOW for MU503 and other cameras that don't appear in MSMF
                 if include_dshow:
                     for info in enumerate_cameras(cv2.CAP_DSHOW):
-                        add_unique(info)
+                        add_or_merge(info)
             except Exception as e:
                 logger.warning("cv2_enumerate_cameras failed: %s", e)
                 cameras = self._fallback_discover()
@@ -163,6 +175,9 @@ class CameraManager:
 
         # Sort by key for stable ordering
         cameras.sort(key=lambda c: c.key)
+        for c in cameras:
+            alts = f", alt_backends={c.alt_backends}" if c.alt_backends else ""
+            logger.info("Discovered: %s idx=%s backend=%s%s", c.name, c.index, c.backend, alts)
         return cameras
 
     def _fallback_discover(self) -> list[CameraInfo]:
@@ -308,18 +323,18 @@ class CameraManager:
             return False
 
         def open_one(info: CameraInfo, retries: int = 2) -> cv2.VideoCapture | None:
-            # Try the discovered backend first, then fall back to alternatives
-            backends = [info.backend]
-            if info.backend == cv2.CAP_MSMF:
-                backends.append(cv2.CAP_DSHOW)
-            elif info.backend == cv2.CAP_DSHOW:
-                backends.append(cv2.CAP_MSMF)
-            # Also try without specifying backend as last resort
-            backends.append(cv2.CAP_ANY)
+            # Build list of (backend, index) pairs to try:
+            # 1. Primary discovered backend+index
+            # 2. Alternative backends discovered for same physical camera
+            # 3. CAP_ANY as last resort
+            attempts_list: list[tuple[int, int]] = [(info.backend, info.index)]
+            for alt_backend, alt_index in info.alt_backends:
+                attempts_list.append((alt_backend, alt_index))
+            attempts_list.append((cv2.CAP_ANY, info.index))
 
-            for backend in backends:
+            for backend, index in attempts_list:
                 for attempt in range(retries):
-                    cap = cv2.VideoCapture(info.index, backend)
+                    cap = cv2.VideoCapture(index, backend)
                     if cap.isOpened():
                         # Set MJPEG to reduce USB bandwidth (critical for multiple cameras)
                         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
@@ -329,22 +344,23 @@ class CameraManager:
                             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
                         if fps is not None:
                             cap.set(cv2.CAP_PROP_FPS, fps)
-                        if backend != info.backend:
+                        if backend != info.backend or index != info.index:
                             logger.info(
-                                "Opened %s with fallback backend %s (discovered as %s)",
+                                "Opened %s with alt backend=%s index=%s (discovered as backend=%s index=%s)",
                                 info.name,
                                 backend,
+                                index,
                                 info.backend,
+                                info.index,
                             )
                         return cap
                     cap.release()
                     if attempt < retries - 1:
                         time.sleep(0.25)
             logger.error(
-                "Failed to open camera: %s (index=%s, tried backends=%s)",
+                "Failed to open camera: %s (tried %s)",
                 info.name,
-                info.index,
-                backends,
+                [(b, i) for b, i in attempts_list],
             )
             return None
 
