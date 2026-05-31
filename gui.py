@@ -62,7 +62,7 @@ class SetupState:
     left_in_focus: bool = False
     right_in_focus: bool = False
     top_in_focus: bool = False
-    shutter_top: bool = True  # True = top+right open, False = left+right open
+    shutter_top: bool = True  # True = top-down camera, False = left+right eyepieces
 
 
 # Legacy aliases for any external code referencing the old private names
@@ -216,9 +216,7 @@ class CameraSetupWindow(QMainWindow):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         align_group = QGroupBox("Alignment Metrics (rotation, scale, translation)")
-        align_group.setToolTip(
-            "Top↔Right updates when 'Top and Right' shutter is selected; Left↔Right when 'Left and Right'."
-        )
+        align_group.setToolTip("Left↔Right updates when 'Eyepieces' slider position is selected.")
         align_inner = QVBoxLayout(align_group)
         self._align_labels: dict[str, QLabel] = {}
         for pair in ("Top↔Left", "Top↔Right", "Left↔Right"):
@@ -305,19 +303,19 @@ class CameraSetupWindow(QMainWindow):
         focus_layout.addStretch()
         layout.addWidget(focus_group)
 
-        # Shutter radio: Top+Right open together, or Left+Right open together
-        shutter_group = QGroupBox("Which has the shutter open?")
+        # Shutter/slider radio: trinocular slider sends light to top-down OR both eyepieces
+        shutter_group = QGroupBox("Trinocular slider position")
         shutter_layout = QVBoxLayout(shutter_group)
         self._shutter_group = QButtonGroup(self)
-        self._rb_shutter_top_right = QRadioButton("Top and Right")
-        self._rb_shutter_top_right.setChecked(True)
-        self._rb_shutter_left_right = QRadioButton("Left and Right")
-        self._shutter_group.addButton(self._rb_shutter_top_right)
-        self._shutter_group.addButton(self._rb_shutter_left_right)
-        self._rb_shutter_top_right.toggled.connect(self._on_shutter_changed)
-        self._rb_shutter_left_right.toggled.connect(self._on_shutter_changed)
-        shutter_layout.addWidget(self._rb_shutter_top_right)
-        shutter_layout.addWidget(self._rb_shutter_left_right)
+        self._rb_shutter_top = QRadioButton("Top (top-down camera)")
+        self._rb_shutter_top.setChecked(True)
+        self._rb_shutter_eyepieces = QRadioButton("Eyepieces (left + right cameras)")
+        self._shutter_group.addButton(self._rb_shutter_top)
+        self._shutter_group.addButton(self._rb_shutter_eyepieces)
+        self._rb_shutter_top.toggled.connect(self._on_shutter_changed)
+        self._rb_shutter_eyepieces.toggled.connect(self._on_shutter_changed)
+        shutter_layout.addWidget(self._rb_shutter_top)
+        shutter_layout.addWidget(self._rb_shutter_eyepieces)
         layout.addWidget(shutter_group)
 
         # Anaglyph method selector
@@ -393,8 +391,8 @@ class CameraSetupWindow(QMainWindow):
 
     def _shutter_open(self, cam_id: str) -> bool:
         """True if this camera has the shutter open (should show live feed)."""
-        if self._rb_shutter_top_right.isChecked():
-            return cam_id in ("top", "right")
+        if self._rb_shutter_top.isChecked():
+            return cam_id == "top"
         return cam_id in ("left", "right")
 
     def _on_shutter_changed(self) -> None:
@@ -403,12 +401,11 @@ class CameraSetupWindow(QMainWindow):
 
     def _both_cams_live_for_pair(self, pair_key: str) -> bool:
         """True if both cameras in this pair have shutter open (so alignment is meaningful)."""
-        top_right_open = self._rb_shutter_top_right.isChecked()
-        if pair_key == "Top↔Right":
-            return top_right_open
+        eyepieces_open = self._rb_shutter_eyepieces.isChecked()
         if pair_key == "Left↔Right":
-            return not top_right_open
-        # Top↔Left: never both live (we have Top+Right or Left+Right only)
+            return eyepieces_open
+        # Top↔Right and Top↔Left: never both live simultaneously
+        # (slider sends light to top OR eyepieces, not both)
         return False
 
     def _update_alignment(self) -> None:
@@ -443,10 +440,14 @@ class CameraSetupWindow(QMainWindow):
                 if both_live:
                     self._align_labels[key].setText(last_valid.get(key, "— (insufficient features)"))
                 else:
-                    if key == "Top↔Right":
-                        self._align_labels[key].setText(last_valid.get(key, "—") + " (use 'Top and Right' shutter)")
+                    if key == "Top↔Right" or key == "Top↔Left":
+                        self._align_labels[key].setText(
+                            last_valid.get(key, "—") + " (top and eyepieces can't be live together)"
+                        )
                     elif key == "Left↔Right":
-                        self._align_labels[key].setText(last_valid.get(key, "—") + " (use 'Left and Right' shutter)")
+                        self._align_labels[key].setText(
+                            last_valid.get(key, "—") + " (select 'Eyepieces' slider position)"
+                        )
                     else:
                         self._align_labels[key].setText(last_valid.get(key, "— (insufficient features)"))
 
