@@ -252,19 +252,24 @@ def build_anaglyph(
     right_bgr: np.ndarray,
     M_right_to_left: np.ndarray,
     method: AnaglyphMethod = AnaglyphMethod.WIMMER,
+    parallax_offset_px: float = 0.0,
 ) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None]:
     """
     Build anaglyph image for red/cyan glasses.
 
     The alignment transform is used for rotation+scale correction only;
     translation is stripped so that horizontal stereo parallax is preserved.
-    This parallax is what creates the 3D depth effect through red/cyan glasses.
+    A manual parallax_offset_px can be added to enhance or create the 3D
+    depth effect when the natural stereo baseline is too small.
 
     Args:
         left_bgr: Left camera frame (BGR).
         right_bgr: Right camera frame (BGR).
         M_right_to_left: 2x3 affine mapping right coords to left coords.
         method: Compositing method.
+        parallax_offset_px: Additional horizontal shift (pixels) applied to
+            the right image.  Positive = right image shifts right (objects
+            appear to recede), negative = shifts left (objects appear closer).
 
     Returns:
         (anaglyph_bgr, roi) or (None, None).
@@ -278,6 +283,9 @@ def build_anaglyph(
 
     # Strip translation to preserve stereo parallax; only correct rotation+scale
     M_rot_only = center_rotation_affine(M_right_to_left, w_r, h_r)
+    # Apply manual parallax offset (horizontal shift of right image)
+    if parallax_offset_px != 0.0:
+        M_rot_only[0, 2] += parallax_offset_px
     right_warped = cv2.warpAffine(right_bgr, M_rot_only, (w_l, h_l))
 
     if method == AnaglyphMethod.WIMMER:

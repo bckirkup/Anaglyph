@@ -364,3 +364,23 @@ class TestParallaxPreservation:
         cyan = anag[:, :, 0]  # from right (B channel)
         # They should NOT be identical everywhere (parallax preserved)
         assert not np.array_equal(red, cyan)
+
+    def test_parallax_offset_shifts_right_image(self) -> None:
+        """Manual parallax offset should shift the right image horizontally."""
+        left = np.full((100, 200, 3), 128, dtype=np.uint8)
+        right = np.full((100, 200, 3), 128, dtype=np.uint8)
+        left[:, 90:110, :] = 255
+        right[:, 90:110, :] = 255  # same position
+        M = np.eye(2, 3, dtype=np.float64)
+        # With offset=0, L and R are identical → greyscale
+        anag_zero, _ = build_anaglyph(left, right, M, AnaglyphMethod.WIMMER, 0.0)
+        assert anag_zero is not None
+        red_0 = anag_zero[:, :, 2]
+        cyan_0 = anag_zero[:, :, 0]
+        assert np.array_equal(red_0, cyan_0)  # identical → greyscale
+        # With offset=10, right is shifted → color at edges
+        anag_off, _ = build_anaglyph(left, right, M, AnaglyphMethod.WIMMER, 10.0)
+        assert anag_off is not None
+        red_off = anag_off[:, :, 2]
+        cyan_off = anag_off[:, :, 0]
+        assert not np.array_equal(red_off, cyan_off)  # shifted → not greyscale

@@ -46,6 +46,8 @@ try:
         QMessageBox,
         QPushButton,
         QRadioButton,
+        QSlider,
+        QSpinBox,
         QVBoxLayout,
         QWidget,
     )
@@ -78,9 +80,10 @@ def build_anaglyph_overlap(
     right_bgr: np.ndarray,
     M_right_to_left: np.ndarray,
     method: AnaglyphMethod = AnaglyphMethod.WIMMER,
+    parallax_offset_px: float = 0.0,
 ) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None]:
     """Thin wrapper around compositor.build_anaglyph for backward compatibility."""
-    return build_anaglyph(left_bgr, right_bgr, M_right_to_left, method)
+    return build_anaglyph(left_bgr, right_bgr, M_right_to_left, method, parallax_offset_px)
 
 
 def cv2_to_qimage(frame: np.ndarray) -> QImage:
@@ -152,6 +155,7 @@ class CameraSetupWindow(QMainWindow):
         self._M_top_to_left: np.ndarray | None = None
         self._transforms_locked: bool = False
         self._anaglyph_method: AnaglyphMethod = AnaglyphMethod.WIMMER
+        self._parallax_offset_px: float = 0.0  # manual horizontal shift for 3D effect
         self._video_recorder = None  # lazy import to avoid circular deps
         self._calibration = None  # CalibrationResult when loaded/computed
         self._setup_ui()
@@ -361,6 +365,31 @@ class CameraSetupWindow(QMainWindow):
         method_layout.addWidget(self._method_combo)
         layout.addWidget(method_group)
 
+        # Parallax offset slider
+        parallax_group = QGroupBox("Parallax Offset (px)")
+        parallax_group.setToolTip(
+            "Horizontal shift of right image relative to left.\n"
+            "Adjust to enhance 3D depth effect when natural stereo\n"
+            "parallax is too small. Try ±5–20 px."
+        )
+        parallax_layout = QVBoxLayout(parallax_group)
+        slider_row = QHBoxLayout()
+        self._parallax_slider = QSlider(Qt.Orientation.Horizontal)
+        self._parallax_slider.setRange(-50, 50)
+        self._parallax_slider.setValue(0)
+        self._parallax_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._parallax_slider.setTickInterval(10)
+        self._parallax_slider.valueChanged.connect(self._on_parallax_changed)
+        slider_row.addWidget(self._parallax_slider)
+        self._parallax_spin = QSpinBox()
+        self._parallax_spin.setRange(-50, 50)
+        self._parallax_spin.setValue(0)
+        self._parallax_spin.setSuffix(" px")
+        self._parallax_spin.valueChanged.connect(self._on_parallax_spin_changed)
+        slider_row.addWidget(self._parallax_spin)
+        parallax_layout.addLayout(slider_row)
+        layout.addWidget(parallax_group)
+
         # Lock / Unlock transforms (replaces Continue)
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
@@ -508,7 +537,11 @@ class CameraSetupWindow(QMainWindow):
                 left_img = self._last_frame.get("left")
                 if left_img is not None:
                     anag, roi = build_anaglyph_overlap(
-                        left_img, self._last_frame.get("right"), M_lr, self._anaglyph_method
+                        left_img,
+                        self._last_frame.get("right"),
+                        M_lr,
+                        self._anaglyph_method,
+                        self._parallax_offset_px,
                     )
                     if roi is not None:
                         self._stereo_overlap_roi = roi
@@ -607,7 +640,9 @@ class CameraSetupWindow(QMainWindow):
             left_img = self._last_frame.get("left")
             right_img = self._last_frame.get("right")
             if M is not None and left_img is not None and right_img is not None:
-                anag, _ = build_anaglyph_overlap(left_img, right_img, M, self._anaglyph_method)
+                anag, _ = build_anaglyph_overlap(
+                    left_img, right_img, M, self._anaglyph_method, self._parallax_offset_px
+                )
                 if anag is not None:
                     img = cv2_to_qimage(anag)
                     self._anaglyph_label.setPixmap(
@@ -721,6 +756,20 @@ class CameraSetupWindow(QMainWindow):
         if method is not None:
             self._anaglyph_method = method
 
+    def _on_parallax_changed(self, value: int) -> None:
+        """Parallax slider moved — update offset and sync spinbox."""
+        self._parallax_offset_px = float(value)
+        self._parallax_spin.blockSignals(True)
+        self._parallax_spin.setValue(value)
+        self._parallax_spin.blockSignals(False)
+
+    def _on_parallax_spin_changed(self, value: int) -> None:
+        """Parallax spinbox changed — update offset and sync slider."""
+        self._parallax_offset_px = float(value)
+        self._parallax_slider.blockSignals(True)
+        self._parallax_slider.setValue(value)
+        self._parallax_slider.blockSignals(False)
+
     def _on_record_toggle(self) -> None:
         """Start or stop video recording."""
         from video_recorder import StereoVideoRecorder
@@ -806,7 +855,7 @@ class CameraSetupWindow(QMainWindow):
             QMessageBox.warning(self, "Save failed", "No anaglyph available (need left/right frames and alignment).")
             return
         try:
-            anag, _ = build_anaglyph_overlap(left_img, right_img, M, self._anaglyph_method)
+            anag, _ = build_anaglyph_overlap(left_img, right_img, M, self._anaglyph_method, self._parallax_offset_px)
             if anag is not None and anag.size > 0:
                 cv2.imwrite(path, anag, [cv2.IMWRITE_JPEG_QUALITY, 95])
                 QMessageBox.information(self, "Saved", f"Anaglyph saved to:\n{path}")
@@ -830,7 +879,7 @@ class CameraSetupWindow(QMainWindow):
         M = getattr(self, "_stereo_M_right_to_left", None)
         anag = None
         if left_img is not None and right_img is not None and M is not None:
-            anag, _ = build_anaglyph(left_img, right_img, M, self._anaglyph_method)
+            anag, _ = build_anaglyph(left_img, right_img, M, self._anaglyph_method, self._parallax_offset_px)
 
         if left_img is None and right_img is None:
             QMessageBox.warning(self, "Capture", "No camera frames available.")
@@ -839,6 +888,7 @@ class CameraSetupWindow(QMainWindow):
         output_dir = Path("./captures/stills")
         metadata = CaptureMetadata(
             anaglyph_method=self._anaglyph_method.value,
+            parallax_offset_px=self._parallax_offset_px,
         )
         if M is not None:
             from compositor import affine_to_metrics as _atm
@@ -893,7 +943,8 @@ class CameraSetupWindow(QMainWindow):
             self,
             "Stereo Calibration Wizard",
             "This wizard will guide you through stereo calibration.\n\n"
-            "You will need a printed checkerboard pattern (9×6 inner corners).\n\n"
+            "You will need a printed checkerboard pattern (5×4 inner corners).\n"
+            "Tip: print a small one that fits your microscope's field of view.\n\n"
             "Steps:\n"
             "1. Place the checkerboard under the stereoscope\n"
             "2. Click 'Capture Pose' to capture (need ≥5 poses)\n"

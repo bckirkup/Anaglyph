@@ -35,6 +35,7 @@ class CaptureMetadata:
     alignment_scale: float = 1.0
     alignment_tx: float = 0.0
     alignment_ty: float = 0.0
+    parallax_offset_px: float = 0.0
     calibration_rms: float | None = None
     notes: str = ""
     extra: dict = field(default_factory=dict)
