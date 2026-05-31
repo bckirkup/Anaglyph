@@ -175,28 +175,31 @@ class CameraSetupWindow(QMainWindow):
 
         # === LEFT SIDEBAR: Camera previews and controls ===
         sidebar = QWidget()
-        sidebar.setMaximumWidth(380)
+        sidebar.setMaximumWidth(420)
         sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(4, 4, 4, 4)
+        sidebar_layout.setSpacing(4)
         preview_group = QGroupBox("Cameras")
         preview_layout = QVBoxLayout(preview_group)
-        # Top (compact)
+        preview_layout.setSpacing(2)
+        # Top
         self._preview_top = QLabel()
-        self._preview_top.setMinimumSize(340, 200)
+        self._preview_top.setMinimumSize(380, 240)
         self._preview_top.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_top.setStyleSheet("background: #1a1a1a; color: #888;")
         self._preview_top.setText("Top\n(no feed)")
         preview_layout.addWidget(self._preview_top)
         self._focus_top = self._make_stoplight("Top")
         preview_layout.addLayout(self._focus_top)
-        # Left | Right (compact)
+        # Left | Right
         lr_row = QHBoxLayout()
         self._preview_left = QLabel()
-        self._preview_left.setMinimumSize(165, 124)
+        self._preview_left.setMinimumSize(185, 140)
         self._preview_left.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_left.setStyleSheet("background: #1a1a1a; color: #888;")
         self._preview_left.setText("Left\n(no feed)")
         self._preview_right = QLabel()
-        self._preview_right.setMinimumSize(165, 124)
+        self._preview_right.setMinimumSize(185, 140)
         self._preview_right.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._preview_right.setStyleSheet("background: #1a1a1a; color: #888;")
         self._preview_right.setText("Right\n(no feed)")
@@ -213,46 +216,56 @@ class CameraSetupWindow(QMainWindow):
         self._setup_ui_controls(sidebar_layout)
         main_layout.addWidget(sidebar)
 
-        # === RIGHT: Metrics, three-way overlay, anaglyph ===
+        # === RIGHT: Anaglyph (dominant) with compact metrics + overlay ===
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
-        align_group = QGroupBox("Alignment Metrics (rotation, scale, translation)")
+        right_layout.setContentsMargins(4, 4, 4, 4)
+        right_layout.setSpacing(4)
+
+        # Compact alignment metrics — single line per pair
+        align_group = QGroupBox("Alignment")
         align_group.setToolTip("Left↔Right updates when 'Eyepieces' slider position is selected.")
+        align_group.setMaximumHeight(100)
         align_inner = QVBoxLayout(align_group)
+        align_inner.setContentsMargins(4, 2, 4, 2)
+        align_inner.setSpacing(1)
         self._align_labels: dict[str, QLabel] = {}
         for pair in ("Top↔Left", "Top↔Right", "Left↔Right"):
-            lbl = QLabel("—")
-            lbl.setWordWrap(True)
-            lbl.setStyleSheet("font-family: monospace; padding: 4px;")
+            lbl = QLabel(f"{pair}: —")
+            lbl.setStyleSheet("font-family: monospace; font-size: 9pt; padding: 0px;")
             self._align_labels[pair] = lbl
-            align_inner.addWidget(QLabel(pair + ":"))
             align_inner.addWidget(lbl)
         self._align_overall = QLabel("Overall: —")
-        self._align_overall.setStyleSheet("font-weight: bold; font-size: 12pt; padding: 8px;")
+        self._align_overall.setStyleSheet("font-weight: bold; font-size: 10pt; padding: 0px;")
         align_inner.addWidget(self._align_overall)
         right_layout.addWidget(align_group)
 
-        overlay_group = QGroupBox("Three-way overlay (all three aligned, grayscale)")
-        overlay_group.setToolTip("Left as reference; right and top warped to align. Full extent of all three blended.")
-        self._overlay_label = QLabel()
-        self._overlay_label.setMinimumSize(420, 280)
-        self._overlay_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._overlay_label.setStyleSheet("background: #1a1a1a; color: #666;")
-        self._overlay_label.setText("Top / Left / Right")
-        overlay_group_layout = QVBoxLayout(overlay_group)
-        overlay_group_layout.addWidget(self._overlay_label)
-        right_layout.addWidget(overlay_group)
-
+        # Anaglyph — dominant view, gets all available stretch
         anaglyph_group = QGroupBox("Anaglyph (cyan/magenta)")
         anaglyph_group.setToolTip("Transform (rotation, scale, translation) is stored for 3D sample mode.")
         self._anaglyph_label = QLabel()
-        self._anaglyph_label.setMinimumSize(480, 360)
+        self._anaglyph_label.setMinimumSize(600, 450)
         self._anaglyph_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._anaglyph_label.setStyleSheet("background: #0a0a0a; color: #666;")
         self._anaglyph_label.setText("Left + Right aligned")
         anaglyph_group_layout = QVBoxLayout(anaglyph_group)
+        anaglyph_group_layout.setContentsMargins(2, 2, 2, 2)
         anaglyph_group_layout.addWidget(self._anaglyph_label)
-        right_layout.addWidget(anaglyph_group, 1)
+        right_layout.addWidget(anaglyph_group, 5)  # dominant stretch
+
+        # Compact overlay at the bottom
+        overlay_group = QGroupBox("Overlay")
+        overlay_group.setToolTip("Left as reference; right and top warped to align. Grayscale blend.")
+        self._overlay_label = QLabel()
+        self._overlay_label.setMinimumSize(200, 120)
+        self._overlay_label.setMaximumHeight(180)
+        self._overlay_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._overlay_label.setStyleSheet("background: #1a1a1a; color: #666;")
+        self._overlay_label.setText("Top / Left / Right")
+        overlay_group_layout = QVBoxLayout(overlay_group)
+        overlay_group_layout.setContentsMargins(2, 2, 2, 2)
+        overlay_group_layout.addWidget(self._overlay_label)
+        right_layout.addWidget(overlay_group, 1)  # small stretch
         main_layout.addWidget(right_panel, 1)
 
     def _make_stoplight(self, name: str) -> QHBoxLayout:
@@ -457,35 +470,27 @@ class CameraSetupWindow(QMainWindow):
             if not self._align_labels.get(key):
                 return
             both_live = self._both_cams_live_for_pair(key)
+            prefix = f"{key}: "
             if text_override:
                 if both_live or key == "Top↔Left":
-                    self._align_labels[key].setText(text_override)
+                    self._align_labels[key].setText(prefix + text_override)
                     last_valid[key] = text_override
                     if m.valid:
                         scores.append(m.score)
                 return
             if m.valid:
-                t = f"rot={m.rotation_deg:.1f}° scale={m.scale:.3f} tx={m.tx:.0f} ty={m.ty:.0f}px  score={m.score:.0f}"
+                t = f"r={m.rotation_deg:.1f}° s={m.scale:.3f} t=({m.tx:.0f},{m.ty:.0f}) q={m.score:.0f}"
                 if both_live or key == "Top↔Left":
-                    self._align_labels[key].setText(t)
+                    self._align_labels[key].setText(prefix + t)
                     last_valid[key] = t
                     scores.append(m.score)
                 else:
-                    self._align_labels[key].setText(last_valid.get(key, "—") + " (use correct shutter to refresh)")
+                    self._align_labels[key].setText(prefix + last_valid.get(key, "—"))
             else:
                 if both_live:
-                    self._align_labels[key].setText(last_valid.get(key, "— (insufficient features)"))
+                    self._align_labels[key].setText(prefix + last_valid.get(key, "—"))
                 else:
-                    if key == "Top↔Right" or key == "Top↔Left":
-                        self._align_labels[key].setText(
-                            last_valid.get(key, "—") + " (top and eyepieces can't be live together)"
-                        )
-                    elif key == "Left↔Right":
-                        self._align_labels[key].setText(
-                            last_valid.get(key, "—") + " (select 'Eyepieces' slider position)"
-                        )
-                    else:
-                        self._align_labels[key].setText(last_valid.get(key, "— (insufficient features)"))
+                    self._align_labels[key].setText(prefix + last_valid.get(key, "—"))
 
         try:
             m_tr, M_tr = compute_alignment(self._last_frame.get("top"), self._last_frame.get("right"))
@@ -643,7 +648,7 @@ class CameraSetupWindow(QMainWindow):
             return
         img = cv2_to_qimage(frame)
         pix = QPixmap.fromImage(img)
-        sizes = {"left": (165, 124), "right": (165, 124), "top": (340, 200)}
+        sizes = {"left": (185, 140), "right": (185, 140), "top": (380, 240)}
         w, h = sizes.get(cam_id, (320, 240))
         scaled = pix.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio)
         label.setPixmap(scaled)
