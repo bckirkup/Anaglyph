@@ -1,21 +1,30 @@
-"""Tests for anaglyph compositing and alignment functions in gui.py."""
+"""Tests for anaglyph compositing and alignment functions in compositor.py."""
 
 from __future__ import annotations
 
 import numpy as np
 import pytest
 
-from gui import (
-    _affine_to_metrics,
-    _apply_180_flip_to_transform,
-    _compose_affine,
-    _invert_affine,
-    _normalize_rotation_deg,
-    build_anaglyph_overlap,
+from compositor import (
+    AnaglyphMethod,
+    affine_to_metrics,
+    apply_180_flip_to_transform,
+    build_anaglyph,
     build_three_way_overlay,
+    compose_affine,
     compute_alignment,
     compute_sharpness,
+    invert_affine,
+    normalize_rotation_deg,
 )
+
+# Aliases for backward-compat with existing test names
+_affine_to_metrics = affine_to_metrics
+_compose_affine = compose_affine
+_invert_affine = invert_affine
+_normalize_rotation_deg = normalize_rotation_deg
+_apply_180_flip_to_transform = apply_180_flip_to_transform
+build_anaglyph_overlap = build_anaglyph
 
 
 class TestNormalizeRotation:
@@ -212,3 +221,85 @@ class TestComputeSharpness:
         blurred = cv2.GaussianBlur(img, (21, 21), 5)
         blurry = compute_sharpness(blurred)
         assert sharp > blurry
+
+
+class TestAnaglyphMethods:
+    """Test all four anaglyph compositing methods."""
+
+    @pytest.fixture()
+    def _stereo_pair(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        rng = np.random.default_rng(42)
+        left = rng.integers(50, 200, (120, 160, 3), dtype=np.uint8)
+        right = rng.integers(50, 200, (120, 160, 3), dtype=np.uint8)
+        M = np.eye(2, 3, dtype=np.float64)
+        return left, right, M
+
+    def test_wimmer_produces_output(self, _stereo_pair: tuple) -> None:
+        left, right, M = _stereo_pair
+        anag, roi = build_anaglyph(left, right, M, AnaglyphMethod.WIMMER)
+        assert anag is not None
+        assert anag.shape[2] == 3
+
+    def test_dubois_produces_output(self, _stereo_pair: tuple) -> None:
+        left, right, M = _stereo_pair
+        anag, roi = build_anaglyph(left, right, M, AnaglyphMethod.DUBOIS)
+        assert anag is not None
+        assert anag.shape[2] == 3
+
+    def test_half_color_produces_output(self, _stereo_pair: tuple) -> None:
+        left, right, M = _stereo_pair
+        anag, roi = build_anaglyph(left, right, M, AnaglyphMethod.HALF_COLOR)
+        assert anag is not None
+        assert anag.shape[2] == 3
+
+    def test_gray_produces_output(self, _stereo_pair: tuple) -> None:
+        left, right, M = _stereo_pair
+        anag, roi = build_anaglyph(left, right, M, AnaglyphMethod.GRAY)
+        assert anag is not None
+        assert anag.shape[2] == 3
+
+    def test_dubois_preserves_color(self, _stereo_pair: tuple) -> None:
+        """Dubois should produce non-grayscale output (unlike Wimmer/gray)."""
+        left, right, M = _stereo_pair
+        anag, _ = build_anaglyph(left, right, M, AnaglyphMethod.DUBOIS)
+        assert anag is not None
+        # Check that channels differ (not all equal = has color)
+        assert not np.array_equal(anag[:, :, 0], anag[:, :, 2])
+
+    def test_half_color_red_from_left_luminance(self, _stereo_pair: tuple) -> None:
+        """Half-color R channel should come from left image luminance (within ROI)."""
+        import cv2
+
+        left, right, M = _stereo_pair
+        anag, roi = build_anaglyph(left, right, M, AnaglyphMethod.HALF_COLOR)
+        assert anag is not None
+        left_gray = cv2.cvtColor(left, cv2.COLOR_BGR2GRAY)
+        if roi is not None:
+            x, y, w, h = roi
+            expected = left_gray[y : y + h, x : x + w]
+        else:
+            expected = left_gray
+        # R channel (index 2 in BGR) should match left luminance within the overlap ROI
+        np.testing.assert_array_equal(anag[:, :, 2], expected)
+
+    def test_gray_wimmer_same_structure(self, _stereo_pair: tuple) -> None:
+        """Gray and Wimmer should have same structure: R=left_gray, G=B=right_gray."""
+        left, right, M = _stereo_pair
+        wimmer, _ = build_anaglyph(left, right, M, AnaglyphMethod.WIMMER)
+        gray, _ = build_anaglyph(left, right, M, AnaglyphMethod.GRAY)
+        assert wimmer is not None and gray is not None
+        # Both use grayscale channels, so G==B in both cases
+        np.testing.assert_array_equal(wimmer[:, :, 0], wimmer[:, :, 1])
+        np.testing.assert_array_equal(gray[:, :, 0], gray[:, :, 1])
+
+    def test_method_enum_values(self) -> None:
+        assert AnaglyphMethod.WIMMER.value == "wimmer"
+        assert AnaglyphMethod.DUBOIS.value == "dubois"
+        assert AnaglyphMethod.HALF_COLOR.value == "half_color"
+        assert AnaglyphMethod.GRAY.value == "gray"
+
+    def test_none_inputs(self) -> None:
+        M = np.eye(2, 3, dtype=np.float64)
+        for method in AnaglyphMethod:
+            anag, roi = build_anaglyph(None, None, M, method)
+            assert anag is None
