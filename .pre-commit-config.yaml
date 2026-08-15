@@ -13,7 +13,7 @@ repos:
         name: Sonar mechanical guards
         entry: python scripts/sonar_guard.py
         language: system
-        files: ^(main|camera_manager|calibration|gui|compositor|video_recorder)\.py$|^tests/.*\.py$
+        files: ^(main|camera_manager|calibration|gui|compositor|video_recorder|still_capture)\.py$|^tests/.*\.py$
         types: [python]
       - id: sonar-workflow-guards
         name: Sonar workflow guards

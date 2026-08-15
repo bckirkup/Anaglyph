@@ -28,9 +28,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --no-build --no-binary-package anaglyph --extra dev
       - name: Ruff lint
-        run: uv run --no-sync --no-build ruff check main.py camera_manager.py calibration.py gui.py compositor.py video_recorder.py tests/
+        run: uv run --no-sync --no-build ruff check main.py camera_manager.py calibration.py gui.py compositor.py video_recorder.py still_capture.py tests/
       - name: Ruff format check
-        run: uv run --no-sync --no-build ruff format --check main.py camera_manager.py calibration.py gui.py compositor.py video_recorder.py tests/
+        run: uv run --no-sync --no-build ruff format --check main.py camera_manager.py calibration.py gui.py compositor.py video_recorder.py still_capture.py tests/
       - name: Mypy (informational)
         run: uv run --no-sync --no-build mypy main.py camera_manager.py calibration.py gui.py --ignore-missing-imports || true
 
@@ -69,7 +69,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Run Python guards
-        run: python scripts/sonar_guard.py main.py camera_manager.py calibration.py gui.py compositor.py video_recorder.py tests
+        run: python scripts/sonar_guard.py main.py camera_manager.py calibration.py gui.py compositor.py video_recorder.py still_capture.py tests
       - name: Run workflow guards
         run: python scripts/sonar_guard.py --workflows .github/workflows
 
