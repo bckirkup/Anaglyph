@@ -634,7 +634,7 @@ class CameraSetupWindow(QMainWindow):
             )
             self._overlay_label.setStyleSheet("background: #000;")
         except Exception:
-            pass
+            pass  # Overlay refresh is best-effort while cameras are changing.
         try:
             M = getattr(self, "_stereo_M_right_to_left", None)
             left_img = self._last_frame.get("left")
@@ -653,7 +653,7 @@ class CameraSetupWindow(QMainWindow):
                     )
                     self._anaglyph_label.setStyleSheet("background: #000;")
         except Exception:
-            pass
+            pass  # Anaglyph refresh is best-effort while cameras are changing.
 
     def get_stereo_params(self) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None]:
         """Return (M_right_to_left, overlap_roi) for use in 3D mode."""

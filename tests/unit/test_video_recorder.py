@@ -78,8 +78,9 @@ class TestStereoVideoRecorder:
     def test_anaglyph_recorded_with_transform(self, tmp_capture_dir: Path) -> None:
         rec = StereoVideoRecorder(output_dir=tmp_capture_dir, record_anaglyph=True)
         rec.start(width=160, height=120, fps=10.0)
-        left = np.random.randint(0, 255, (120, 160, 3), dtype=np.uint8)
-        right = np.random.randint(0, 255, (120, 160, 3), dtype=np.uint8)
+        rng = np.random.default_rng(42)
+        left = rng.integers(0, 255, (120, 160, 3), dtype=np.uint8)
+        right = rng.integers(0, 255, (120, 160, 3), dtype=np.uint8)
         M = np.eye(2, 3, dtype=np.float64)
         for _ in range(3):
             rec.add_frame(left, right, M)

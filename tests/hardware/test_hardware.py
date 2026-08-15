@@ -131,7 +131,8 @@ class TestAlignment:
 
         mgr = CameraManager()
         pair = mgr.get_stereo_pair(prefer_amscope=False)
-        assert pair.left and pair.right
+        assert pair.left is not None
+        assert pair.right is not None
         ok = mgr.open_captures(pair)
         assert ok
         try:
@@ -165,7 +166,8 @@ class TestAnaglyph:
 
         mgr = CameraManager()
         pair = mgr.get_stereo_pair(prefer_amscope=False)
-        assert pair.left and pair.right
+        assert pair.left is not None
+        assert pair.right is not None
         ok = mgr.open_captures(pair)
         assert ok
         try:

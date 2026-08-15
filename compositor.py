@@ -87,8 +87,8 @@ def affine_to_metrics(M: np.ndarray | None) -> AlignmentMetrics:
     out = AlignmentMetrics()
     if M is None or M.size == 0:
         return out
-    a, b, tx = M[0]
-    c, d, ty = M[1]
+    a, _, tx = M[0]
+    c, _, ty = M[1]
     scale = np.sqrt(a * a + c * c)
     rotation_rad = np.arctan2(c, a)
     rotation_deg = normalize_rotation_deg(np.degrees(rotation_rad))
@@ -183,7 +183,7 @@ def compute_alignment(img1: np.ndarray, img2: np.ndarray) -> tuple[AlignmentMetr
     pts1 = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
     pts2 = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
     try:
-        M, inliers = cv2.estimateAffinePartial2D(pts1, pts2)
+        M, _ = cv2.estimateAffinePartial2D(pts1, pts2)
     except cv2.error:
         return out, None
     if M is None:

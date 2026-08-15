@@ -46,16 +46,26 @@ select = [
     "UP",   # pyupgrade
     "B",    # flake8-bugbear
     "SIM",  # flake8-simplify
-    "TC",   # type-checking imports
+    "ARG",  # unused function arguments
+    "C90",  # complexity ratchet
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
     "SIM108", # ternary operator
-    "TC002",  # numpy/cv2 are runtime deps, not type-only
 ]
 
 [tool.ruff.lint.isort]
 known-first-party = ["camera_manager", "calibration", "gui", "compositor", "video_recorder"]
+
+[tool.ruff.lint.per-file-ignores]
+# C901: open_captures has measured legacy complexity 19; remove when simplified.
+"camera_manager.py" = ["C901"]
+# C901: _update_alignment has measured legacy complexity 29; remove when simplified.
+"gui.py" = ["C901"]
+
+[tool.ruff.lint.mccabe]
+# Measured current maximum; ratchet this ceiling down only.
+max-complexity = 29
 
 [tool.mypy]
 python_version = "3.10"

@@ -31,7 +31,7 @@ build_anaglyph_overlap = build_anaglyph
 
 class TestNormalizeRotation:
     def test_zero(self) -> None:
-        assert _normalize_rotation_deg(0.0) == 0.0
+        assert _normalize_rotation_deg(0.0) == pytest.approx(0.0)
 
     def test_positive_wrap(self) -> None:
         assert _normalize_rotation_deg(270.0) == pytest.approx(-90.0)
@@ -150,7 +150,8 @@ class TestBuildAnaglyphOverlap:
         assert anag is not None
         assert roi is not None
         assert anag.shape[2] == 3  # BGR
-        assert anag.shape[0] > 0 and anag.shape[1] > 0
+        assert anag.shape[0] > 0
+        assert anag.shape[1] > 0
 
     def test_red_channel_is_left(
         self,
@@ -211,7 +212,7 @@ class TestComputeSharpness:
         assert s == pytest.approx(0.0, abs=1.0)
 
     def test_none_input(self) -> None:
-        assert compute_sharpness(None) == 0.0
+        assert compute_sharpness(None) == pytest.approx(0.0)
 
     def test_sharp_vs_blurry(self) -> None:
         """Sharp image should have higher sharpness than blurred version."""
@@ -289,7 +290,8 @@ class TestAnaglyphMethods:
         left, right, M = _stereo_pair
         wimmer, _ = build_anaglyph(left, right, M, AnaglyphMethod.WIMMER)
         gray, _ = build_anaglyph(left, right, M, AnaglyphMethod.GRAY)
-        assert wimmer is not None and gray is not None
+        assert wimmer is not None
+        assert gray is not None
         # Both use grayscale channels, so G==B in both cases
         np.testing.assert_array_equal(wimmer[:, :, 0], wimmer[:, :, 1])
         np.testing.assert_array_equal(gray[:, :, 0], gray[:, :, 1])
