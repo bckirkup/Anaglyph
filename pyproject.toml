@@ -57,7 +57,14 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["camera_manager", "calibration", "gui", "compositor", "video_recorder"]
 
+[tool.ruff.lint.per-file-ignores]
+# C901: open_captures has measured legacy complexity 19; remove when simplified.
+"camera_manager.py" = ["C901"]
+# C901: _update_alignment has measured legacy complexity 29; remove when simplified.
+"gui.py" = ["C901"]
+
 [tool.ruff.lint.mccabe]
+# Measured current maximum; ratchet this ceiling down only.
 max-complexity = 29
 
 [tool.mypy]
