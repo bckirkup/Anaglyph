@@ -62,6 +62,7 @@ def test_kill_rate_grades_survivors():
     assert span > 0.2, f"kill_rate looks dead: span={span:.3f}"  # live knob
     assert min(metric) >= 0  # bounds (see below)
 
+
 def test_unrelated_key_does_not_move_survivors():
     base = run(seed=7).survivors
     other = run(seed=7, output_precision=3).survivors
@@ -211,8 +212,10 @@ Within a file, group by role:
 class TestSensitivity:
     """Graded response: a few different values in -> a few different values out."""
 
+
 class TestInvariants:
     """Ranges, finiteness, conservation, stability."""
+
 
 class TestChangeDetectors:
     """Pinned values. Not correctness checks — see comments."""
