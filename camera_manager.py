@@ -298,46 +298,6 @@ class CameraManager:
             return cameras[default_index]
         return None
 
-    @staticmethod
-    def _open_one_capture(
-        info: CameraInfo,
-        width: int | None,
-        height: int | None,
-        fps: float | None,
-        retries: int = 2,
-    ) -> cv2.VideoCapture | None:
-        """Open one camera, trying its discovered and fallback backends."""
-        attempts_list: list[tuple[int, int]] = [(info.backend, info.index)]
-        attempts_list.extend(info.alt_backends)
-        attempts_list.append((cv2.CAP_ANY, info.index))
-
-        for backend, index in attempts_list:
-            for attempt in range(retries):
-                cap = cv2.VideoCapture(index, backend)
-                if cap.isOpened():
-                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
-                    if width is not None:
-                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-                    if height is not None:
-                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-                    if fps is not None:
-                        cap.set(cv2.CAP_PROP_FPS, fps)
-                    if backend != info.backend or index != info.index:
-                        logger.info(
-                            "Opened %s with alt backend=%s index=%s (discovered as backend=%s index=%s)",
-                            info.name,
-                            backend,
-                            index,
-                            info.backend,
-                            info.index,
-                        )
-                    return cap
-                cap.release()
-                if attempt < retries - 1:
-                    time.sleep(0.25)
-        logger.error("Failed to open camera: %s (tried %s)", info.name, attempts_list)
-        return None
-
     def open_captures(
         self,
         pair: StereoPair,
