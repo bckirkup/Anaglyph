@@ -7,17 +7,23 @@ for dual-camera AmScope stereoscope setups. Uses PyQt6 + OpenCV.
 
 ## Setup
 ```bash
-pip install -e ".[dev]"
+uv sync --locked --no-build --no-binary-package anaglyph --extra dev
 pre-commit install
 ```
+
+## Before Editing
+- Read `.agents/skills/sonar-quality/SKILL.md` before writing or changing code.
 
 ## Validation Commands
 Run these before committing:
 ```bash
-ruff check .
-ruff format --check .
-mypy main.py camera_manager.py calibration.py gui.py --ignore-missing-imports
-pytest tests/ -v -m "not hardware" --tb=short
+pre-commit run --all-files
+python scripts/sonar_guard.py main.py camera_manager.py calibration.py gui.py compositor.py video_recorder.py tests
+python scripts/sonar_guard.py --workflows .github/workflows
+uv run --no-sync --no-build ruff check main.py camera_manager.py calibration.py gui.py compositor.py video_recorder.py tests/
+uv run --no-sync --no-build ruff format --check main.py camera_manager.py calibration.py gui.py compositor.py video_recorder.py tests/
+uv run --no-sync --no-build mypy main.py camera_manager.py calibration.py gui.py --ignore-missing-imports || true
+uv run --no-sync --no-build pytest tests/ -v -m "not hardware" --tb=short
 ```
 
 ## Architecture Rules

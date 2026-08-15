@@ -1,7 +1,28 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
+    rev: v0.4.4
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [--fix, "--config=lint.mccabe.max-complexity=15"]
+        exclude: ^scripts/sonar_guard\.py$
       - id: ruff-format
+        exclude: ^scripts/sonar_guard\.py$
+  - repo: local
+    hooks:
+      - id: sonar-mechanical-guards
+        name: Sonar mechanical guards
+        entry: python scripts/sonar_guard.py
+        language: system
+        files: ^(main|camera_manager|calibration|gui|compositor|video_recorder)\.py$|^tests/.*\.py$
+        types: [python]
+      - id: sonar-workflow-guards
+        name: Sonar workflow guards
+        entry: python scripts/sonar_guard.py --workflows
+        language: system
+        files: ^\.github/workflows/.*\.(yml|yaml)$
+        types: [yaml]
+  - repo: https://github.com/woodruffw/zizmor-pre-commit
+    rev: v1.29.0
+    hooks:
+      - id: zizmor
+        args: [--no-progress]

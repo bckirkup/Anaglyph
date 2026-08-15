@@ -298,6 +298,46 @@ class CameraManager:
             return cameras[default_index]
         return None
 
+    @staticmethod
+    def _open_one_capture(
+        info: CameraInfo,
+        width: int | None,
+        height: int | None,
+        fps: float | None,
+        retries: int = 2,
+    ) -> cv2.VideoCapture | None:
+        """Open one camera, trying its discovered and fallback backends."""
+        attempts_list: list[tuple[int, int]] = [(info.backend, info.index)]
+        attempts_list.extend(info.alt_backends)
+        attempts_list.append((cv2.CAP_ANY, info.index))
+
+        for backend, index in attempts_list:
+            for attempt in range(retries):
+                cap = cv2.VideoCapture(index, backend)
+                if cap.isOpened():
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+                    if width is not None:
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+                    if height is not None:
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+                    if fps is not None:
+                        cap.set(cv2.CAP_PROP_FPS, fps)
+                    if backend != info.backend or index != info.index:
+                        logger.info(
+                            "Opened %s with alt backend=%s index=%s (discovered as backend=%s index=%s)",
+                            info.name,
+                            backend,
+                            index,
+                            info.backend,
+                            info.index,
+                        )
+                    return cap
+                cap.release()
+                if attempt < retries - 1:
+                    time.sleep(0.25)
+        logger.error("Failed to open camera: %s (tried %s)", info.name, attempts_list)
+        return None
+
     def open_captures(
         self,
         pair: StereoPair,
@@ -322,57 +362,15 @@ class CameraManager:
         if not pair.left or not pair.right:
             return False
 
-        def open_one(info: CameraInfo, retries: int = 2) -> cv2.VideoCapture | None:
-            # Build list of (backend, index) pairs to try:
-            # 1. Primary discovered backend+index
-            # 2. Alternative backends discovered for same physical camera
-            # 3. CAP_ANY as last resort
-            attempts_list: list[tuple[int, int]] = [(info.backend, info.index)]
-            for alt_backend, alt_index in info.alt_backends:
-                attempts_list.append((alt_backend, alt_index))
-            attempts_list.append((cv2.CAP_ANY, info.index))
-
-            for backend, index in attempts_list:
-                for attempt in range(retries):
-                    cap = cv2.VideoCapture(index, backend)
-                    if cap.isOpened():
-                        # Set MJPEG to reduce USB bandwidth (critical for multiple cameras)
-                        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
-                        if width is not None:
-                            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-                        if height is not None:
-                            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-                        if fps is not None:
-                            cap.set(cv2.CAP_PROP_FPS, fps)
-                        if backend != info.backend or index != info.index:
-                            logger.info(
-                                "Opened %s with alt backend=%s index=%s (discovered as backend=%s index=%s)",
-                                info.name,
-                                backend,
-                                index,
-                                info.backend,
-                                info.index,
-                            )
-                        return cap
-                    cap.release()
-                    if attempt < retries - 1:
-                        time.sleep(0.25)
-            logger.error(
-                "Failed to open camera: %s (tried %s)",
-                info.name,
-                [(b, i) for b, i in attempts_list],
-            )
-            return None
-
         # Open top first (often DSHOW/MU503), then left/right, so all get a chance to init
         if pair.top:
-            pair.top_capture = open_one(pair.top)
+            pair.top_capture = self._open_one_capture(pair.top, width, height, fps)
             if pair.top_capture:
                 time.sleep(0.2)
-        pair.left_capture = open_one(pair.left)
+        pair.left_capture = self._open_one_capture(pair.left, width, height, fps)
         if pair.left_capture:
             time.sleep(0.2)
-        pair.right_capture = open_one(pair.right)
+        pair.right_capture = self._open_one_capture(pair.right, width, height, fps)
 
         # Warmup: one read per camera so drivers settle
         for cap in (pair.top_capture, pair.left_capture, pair.right_capture):

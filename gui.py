@@ -486,6 +486,128 @@ class CameraSetupWindow(QMainWindow):
         # (slider sends light to top OR eyepieces, not both)
         return False
 
+    def _set_alignment_label(
+        self,
+        key: str,
+        metrics: AlignmentMetrics,
+        scores: list[float],
+        last_valid: dict[str, str],
+        text_override: str | None = None,
+    ) -> None:
+        """Update one alignment label and retain its last useful value."""
+        if not self._align_labels.get(key):
+            return
+        both_live = self._both_cams_live_for_pair(key)
+        prefix = f"{key}: "
+        if text_override:
+            if both_live or key == "Top↔Left":
+                self._align_labels[key].setText(prefix + text_override)
+                last_valid[key] = text_override
+                if metrics.valid:
+                    scores.append(metrics.score)
+            return
+        if metrics.valid:
+            text = (
+                f"r={metrics.rotation_deg:.1f}° s={metrics.scale:.3f} "
+                f"t=({metrics.tx:.0f},{metrics.ty:.0f}) q={metrics.score:.0f}"
+            )
+            if both_live or key == "Top↔Left":
+                self._align_labels[key].setText(prefix + text)
+                last_valid[key] = text
+                scores.append(metrics.score)
+            else:
+                self._align_labels[key].setText(prefix + last_valid.get(key, "—"))
+            return
+        self._align_labels[key].setText(prefix + last_valid.get(key, "—"))
+
+    def _initial_alignment(self) -> tuple[AlignmentMetrics, np.ndarray | None, AlignmentMetrics, np.ndarray | None]:
+        """Compute top-right and left-right transforms, including reverse fallback."""
+        m_tr, M_tr = compute_alignment(self._last_frame.get("top"), self._last_frame.get("right"))
+        if not m_tr.valid and M_tr is None:
+            _, M_rt = compute_alignment(self._last_frame.get("right"), self._last_frame.get("top"))
+            if M_rt is not None:
+                M_tr = _invert_affine(M_rt)
+                m_tr = _affine_to_metrics(M_tr)
+                m_tr.valid = True
+        m_lr, M_lr = compute_alignment(self._last_frame.get("right"), self._last_frame.get("left"))
+        return m_tr, M_tr, m_lr, M_lr
+
+    def _complete_alignment(
+        self,
+        m_tr: AlignmentMetrics,
+        M_tr: np.ndarray | None,
+        M_lr: np.ndarray | None,
+    ) -> tuple[
+        AlignmentMetrics,
+        np.ndarray | None,
+        AlignmentMetrics,
+        np.ndarray | None,
+        str | None,
+    ]:
+        """Complete top-left alignment directly or through the other two pairs."""
+        m_tl, M_tl = compute_alignment(self._last_frame.get("top"), self._last_frame.get("left"))
+        if not m_tl.valid and M_tr is not None and M_lr is not None:
+            M_tl = _compose_affine(M_tr, M_lr)
+            m_tl = _affine_to_metrics(M_tl)
+            m_tl.valid = True
+
+        transitive_text = None
+        if not m_tr.valid and M_tl is not None and M_lr is not None:
+            M_tr = _compose_affine(_invert_affine(M_lr), M_tl)
+            m_tr = _affine_to_metrics(M_tr)
+            m_tr.valid = True
+            transitive_text = (
+                f"rot={m_tr.rotation_deg:.1f}° scale={m_tr.scale:.3f} "
+                f"tx={m_tr.tx:.0f} ty={m_tr.ty:.0f}px  score={m_tr.score:.0f} (transitive)"
+            )
+        return m_tr, M_tr, m_tl, M_tl, transitive_text
+
+    def _correct_alignment_consistency(
+        self,
+        m_tr: AlignmentMetrics,
+        M_tr: np.ndarray | None,
+        m_lr: AlignmentMetrics,
+        M_lr: np.ndarray | None,
+        m_tl: AlignmentMetrics,
+        M_tl: np.ndarray | None,
+    ) -> tuple[AlignmentMetrics, np.ndarray | None, AlignmentMetrics, np.ndarray | None, bool, bool]:
+        """Correct 180-degree ambiguities between the three camera transforms."""
+        if not m_tl.valid or M_tl is None:
+            return m_tr, M_tr, m_lr, M_lr, False, False
+
+        r_tr = _normalize_rotation_deg(m_tr.rotation_deg)
+        r_lr = _normalize_rotation_deg(m_lr.rotation_deg)
+        r_tl = _normalize_rotation_deg(m_tl.rotation_deg)
+        expected_tl = _normalize_rotation_deg(r_tr + r_lr)
+        top_img = self._last_frame.get("top")
+        right_img = self._last_frame.get("right")
+        if top_img is not None and abs(r_tl - expected_tl) > 90:
+            h_t, w_t = top_img.shape[:2]
+            M_tl = _apply_180_flip_to_transform(M_tl, w_t, h_t)
+            m_tl = _affine_to_metrics(M_tl)
+            r_tl = _normalize_rotation_deg(m_tl.rotation_deg)
+
+        corrected_lr = False
+        if right_img is not None and M_lr is not None:
+            r_lr_new = _normalize_rotation_deg(m_lr.rotation_deg)
+            expected_lr = _normalize_rotation_deg(r_tl - r_tr)
+            if abs(r_lr_new - expected_lr) > 90:
+                h_r, w_r = right_img.shape[:2]
+                M_lr = _apply_180_flip_to_transform(M_lr, w_r, h_r)
+                m_lr = _affine_to_metrics(M_lr)
+                corrected_lr = True
+
+        corrected_tr = False
+        if M_tr is not None and top_img is not None:
+            r_tr_new = _normalize_rotation_deg(m_tr.rotation_deg)
+            expected_tr = _normalize_rotation_deg(r_tl - r_lr)
+            if abs(r_tr_new - expected_tr) > 90:
+                h_t, w_t = top_img.shape[:2]
+                M_tr = _apply_180_flip_to_transform(M_tr, w_t, h_t)
+                m_tr = _affine_to_metrics(M_tr)
+                corrected_tr = True
+        return m_tr, M_tr, m_lr, M_lr, corrected_lr, corrected_tr
+
     def _update_alignment(self) -> None:
         """Compute and display alignment metrics. Keep last valid when static (persistent metrics)."""
         if getattr(self, "_transforms_locked", False):
@@ -495,48 +617,15 @@ class CameraSetupWindow(QMainWindow):
         scores = []
         last_valid = self._last_valid_align_text
 
-        def set_pair(key: str, m: AlignmentMetrics, text_override: str | None = None) -> None:
-            if not self._align_labels.get(key):
-                return
-            both_live = self._both_cams_live_for_pair(key)
-            prefix = f"{key}: "
-            if text_override:
-                if both_live or key == "Top↔Left":
-                    self._align_labels[key].setText(prefix + text_override)
-                    last_valid[key] = text_override
-                    if m.valid:
-                        scores.append(m.score)
-                return
-            if m.valid:
-                t = f"r={m.rotation_deg:.1f}° s={m.scale:.3f} t=({m.tx:.0f},{m.ty:.0f}) q={m.score:.0f}"
-                if both_live or key == "Top↔Left":
-                    self._align_labels[key].setText(prefix + t)
-                    last_valid[key] = t
-                    scores.append(m.score)
-                else:
-                    self._align_labels[key].setText(prefix + last_valid.get(key, "—"))
-            else:
-                if both_live:
-                    self._align_labels[key].setText(prefix + last_valid.get(key, "—"))
-                else:
-                    self._align_labels[key].setText(prefix + last_valid.get(key, "—"))
-
         try:
-            m_tr, M_tr = compute_alignment(self._last_frame.get("top"), self._last_frame.get("right"))
-            if not m_tr.valid and M_tr is None:
-                m_rt, M_rt = compute_alignment(self._last_frame.get("right"), self._last_frame.get("top"))
-                if M_rt is not None:
-                    M_tr = _invert_affine(M_rt)
-                    m_tr = _affine_to_metrics(M_tr)
-                    m_tr.valid = True
-            m_lr, M_lr = compute_alignment(self._last_frame.get("right"), self._last_frame.get("left"))
-            set_pair("Top↔Right", m_tr)
-            set_pair("Left↔Right", m_lr)
+            m_tr, M_tr, m_lr, M_lr = self._initial_alignment()
+            self._set_alignment_label("Top↔Right", m_tr, scores, last_valid)
+            self._set_alignment_label("Left↔Right", m_lr, scores, last_valid)
             if m_lr.valid and M_lr is not None:
                 self._stereo_M_right_to_left = M_lr.copy()
                 left_img = self._last_frame.get("left")
                 if left_img is not None:
-                    anag, roi = build_anaglyph_overlap(
+                    _, roi = build_anaglyph_overlap(
                         left_img,
                         self._last_frame.get("right"),
                         M_lr,
@@ -546,60 +635,24 @@ class CameraSetupWindow(QMainWindow):
                     if roi is not None:
                         self._stereo_overlap_roi = roi
 
-            m_tl, M_tl = compute_alignment(self._last_frame.get("top"), self._last_frame.get("left"))
-            if m_tl.valid and M_tl is not None:
-                pass  # will apply consistency fix below
-            elif M_tr is not None and M_lr is not None:
-                M_tl = _compose_affine(M_tr, M_lr)
-                m_tl = _affine_to_metrics(M_tl)
-                m_tl.valid = True
-            # If Top↔Right failed (e.g. top vs side view), derive from Top↔Left and Left↔Right
-            if (not m_tr.valid) and M_tl is not None and M_lr is not None:
-                M_tr = _compose_affine(_invert_affine(M_lr), M_tl)
-                m_tr = _affine_to_metrics(M_tr)
-                m_tr.valid = True
-                t = (
-                    f"rot={m_tr.rotation_deg:.1f}° scale={m_tr.scale:.3f} "
-                    f"tx={m_tr.tx:.0f} ty={m_tr.ty:.0f}px  score={m_tr.score:.0f} (transitive)"
-                )
-                set_pair("Top↔Right", m_tr, t)
+            m_tr, M_tr, m_tl, M_tl, transitive_text = self._complete_alignment(m_tr, M_tr, M_lr)
+            if transitive_text:
+                self._set_alignment_label("Top↔Right", m_tr, scores, last_valid, transitive_text)
                 scores.append(m_tr.score)
+            m_tr, M_tr, m_lr, M_lr, corrected_lr, corrected_tr = self._correct_alignment_consistency(
+                m_tr, M_tr, m_lr, M_lr, m_tl, M_tl
+            )
+            if corrected_lr and M_lr is not None:
+                self._set_alignment_label("Left↔Right", m_lr, scores, last_valid)
+                self._stereo_M_right_to_left = M_lr.copy()
+            if corrected_tr:
+                self._set_alignment_label("Top↔Right", m_tr, scores, last_valid)
             if m_tl.valid and M_tl is not None:
-                # Enforce consistency: r_tl ≈ r_tr + r_lr (mod 360). Correct ~180° ambiguity.
-                r_tr = _normalize_rotation_deg(m_tr.rotation_deg)
-                r_lr = _normalize_rotation_deg(m_lr.rotation_deg)
-                r_tl = _normalize_rotation_deg(m_tl.rotation_deg)
-                expected_tl = _normalize_rotation_deg(r_tr + r_lr)
-                top_img = self._last_frame.get("top")
-                right_img = self._last_frame.get("right")
-                if top_img is not None and abs(r_tl - expected_tl) > 90:
-                    # Top↔Left is ~180° off; apply 180° flip to M_tl (source = top)
-                    h_t, w_t = top_img.shape[:2]
-                    M_tl = _apply_180_flip_to_transform(M_tl, w_t, h_t)
-                    m_tl = _affine_to_metrics(M_tl)
-                    r_tl = _normalize_rotation_deg(m_tl.rotation_deg)
-                if right_img is not None and M_lr is not None:
-                    r_lr_new = _normalize_rotation_deg(m_lr.rotation_deg)
-                    expected_lr = _normalize_rotation_deg(r_tl - r_tr)
-                    if abs(r_lr_new - expected_lr) > 90:
-                        h_r, w_r = right_img.shape[:2]
-                        M_lr = _apply_180_flip_to_transform(M_lr, w_r, h_r)
-                        m_lr = _affine_to_metrics(M_lr)
-                        set_pair("Left↔Right", m_lr)
-                        self._stereo_M_right_to_left = M_lr.copy()
-                if M_tr is not None and top_img is not None:
-                    r_tr_new = _normalize_rotation_deg(m_tr.rotation_deg)
-                    expected_tr = _normalize_rotation_deg(r_tl - r_lr)
-                    if abs(r_tr_new - expected_tr) > 90:
-                        h_t, w_t = top_img.shape[:2]
-                        M_tr = _apply_180_flip_to_transform(M_tr, w_t, h_t)
-                        m_tr = _affine_to_metrics(M_tr)
-                        set_pair("Top↔Right", m_tr)
                 self._M_top_to_left = M_tl.copy()
-                set_pair("Top↔Left", m_tl)
+                self._set_alignment_label("Top↔Left", m_tl, scores, last_valid)
                 scores.append(m_tl.score)
             else:
-                set_pair("Top↔Left", m_tl)
+                self._set_alignment_label("Top↔Left", m_tl, scores, last_valid)
         except Exception:
             for key in ("Top↔Left", "Top↔Right", "Left↔Right"):
                 if self._align_labels.get(key) and key in last_valid:
@@ -634,7 +687,7 @@ class CameraSetupWindow(QMainWindow):
             )
             self._overlay_label.setStyleSheet("background: #000;")
         except Exception:
-            pass
+            pass  # Overlay refresh is best-effort while cameras are changing.
         try:
             M = getattr(self, "_stereo_M_right_to_left", None)
             left_img = self._last_frame.get("left")
@@ -653,7 +706,7 @@ class CameraSetupWindow(QMainWindow):
                     )
                     self._anaglyph_label.setStyleSheet("background: #000;")
         except Exception:
-            pass
+            pass  # Anaglyph refresh is best-effort while cameras are changing.
 
     def get_stereo_params(self) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None]:
         """Return (M_right_to_left, overlap_roi) for use in 3D mode."""

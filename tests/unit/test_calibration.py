@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pytest
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -128,7 +129,7 @@ class TestSaveLoadCalibration:
         path = tmp_path / "test_cal.npz"
         save_calibration(cal, path)
         summary = json.loads(path.with_suffix(".json").read_text())
-        assert summary["rms_error"] == 0.5
+        assert summary["rms_error"] == pytest.approx(0.5)
         assert summary["num_poses"] == 8
         assert summary["image_size"] == [640, 480]
-        assert summary["baseline_mm"] == 10.0
+        assert summary["baseline_mm"] == pytest.approx(10.0)
