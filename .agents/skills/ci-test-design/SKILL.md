@@ -54,18 +54,18 @@ Shape:
 
 ```python
 def test_kill_rate_grades_survivors():
-    values = [0.0, 1e-4, 1e-3, 1e-2]          # 3+ points, wide span
+    values = [0.0, 1e-4, 1e-3, 1e-2]  # 3+ points, wide span
     metric = [run(seed=7, kill_rate=v).survivors for v in values]
 
-    assert metric == sorted(metric, reverse=True)          # ordering
+    assert metric == sorted(metric, reverse=True)  # ordering
     span = (max(metric) - min(metric)) / max(metric[0], 1)
-    assert span > 0.2, f"kill_rate looks dead: span={span:.3f}"   # live knob
-    assert min(metric) >= 0                                # bounds (see below)
+    assert span > 0.2, f"kill_rate looks dead: span={span:.3f}"  # live knob
+    assert min(metric) >= 0  # bounds (see below)
 
 def test_unrelated_key_does_not_move_survivors():
     base = run(seed=7).survivors
     other = run(seed=7, output_precision=3).survivors
-    assert other == pytest.approx(base, rel=1e-9)          # negative control
+    assert other == pytest.approx(base, rel=1e-9)  # negative control
 ```
 
 C++ (CTest) — same structure, asserting on real observables rather than a hash:
