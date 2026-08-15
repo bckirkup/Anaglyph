@@ -390,8 +390,8 @@ def _editable_install_is_local(tokens: list[str]) -> bool:
     editable = False
     index = 0
     while index < len(tokens):
-        token = tokens[index]
-        if token in {"-e", "--editable"}:
+        arg = tokens[index]
+        if arg in {"-e", "--editable"}:
             editable = True
             if index + 1 < len(tokens):
                 targets.append(tokens[index + 1])
@@ -422,17 +422,17 @@ def _requirement_tokens(tokens: list[str]) -> list[str]:
     requirements: list[str] = []
     index = 0
     while index < len(tokens):
-        token = tokens[index]
-        if token in {"-e", "--editable"}:
+        arg = tokens[index]
+        if arg in {"-e", "--editable"}:
             index += 2
             continue
-        if token in option_values:
+        if arg in option_values:
             index += 2
             continue
-        if token.startswith("-"):
+        if arg.startswith("-"):
             index += 1
             continue
-        requirements.append(token)
+        requirements.append(arg)
         index += 1
     return requirements
 
@@ -464,13 +464,13 @@ def _uv_from_requirements(tokens: list[str]) -> list[str]:
     requirements: list[str] = []
     index = 0
     while index < len(tokens):
-        token = tokens[index]
-        if token == "--from" and index + 1 < len(tokens):
+        arg = tokens[index]
+        if arg == "--from" and index + 1 < len(tokens):
             requirements.append(tokens[index + 1])
             index += 2
             continue
-        if token.startswith("--from="):
-            requirements.append(token.removeprefix("--from="))
+        if arg.startswith("--from="):
+            requirements.append(arg.removeprefix("--from="))
         index += 1
     return requirements
 
@@ -551,7 +551,7 @@ def _uv_command_tokens(kind: str, tokens: list[str]) -> list[str]:
     if kind == "tool_run" and tokens and tokens[0] == "uvx":
         return tokens[1:]
     command_index = next(
-        (index for index, token in enumerate(tokens) if token in {"sync", "add", "install", "run"}),
+        (index for index, arg in enumerate(tokens) if arg in {"sync", "add", "install", "run"}),
         len(tokens),
     )
     return tokens[command_index + 1 :]
@@ -591,7 +591,7 @@ def _workflow_segment_findings(path: Path, line: int, segment: str) -> list[Find
 
 def _pip_findings(path: Path, line: int, tokens: list[str]) -> list[Finding]:
     install_index = next(
-        (index for index, token in enumerate(tokens) if token == "install"),
+        (index for index, arg in enumerate(tokens) if arg == "install"),
         len(tokens),
     )
     install_tokens = tokens[install_index + 1 :]
